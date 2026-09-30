@@ -53,6 +53,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   candidate. The id scheme does not change: `fallow security --format json`
   and SARIF output stay byte-identical.
 
+- **`fallow dupes` separates symlinked files from copied code.** A clone
+  instance whose path is a symlink, or lies under a symlinked directory, now
+  carries `is_symlink: true` in JSON output, `symlink=true` in compact output
+  and a `(symlink)` marker in human output. The field is omitted when it is
+  `false`. To report only duplication between real files, set
+  `duplicates.ignoreSymlinks: true` or pass `--ignore-symlinks`. A clone group
+  with fewer than two remaining instances is then not reported. Symlinked
+  files then also leave the duplication statistics, so the file and line
+  totals and the `threshold` percentage count only real files.
+  `--no-ignore-symlinks` overrides a config value of `true`. The bare combined
+  run accepts `--dupes-ignore-symlinks` and `--dupes-no-ignore-symlinks`. The
+  MCP `find_dupes` and `trace_clone` tools accept `ignore_symlinks`, and the
+  Code Mode combined helper accepts `dupes_ignore_symlinks`. The Node
+  `detectDuplication` function accepts `ignoreSymlinks`. The default report
+  keeps symlinked instances
+  ([#2961](https://github.com/fallow-rs/fallow/issues/2961)).
+
 ### Performance
 
 - **YAML files parse faster.** Fallow now reads `pnpm-lock.yaml`,
