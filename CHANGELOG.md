@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`fallow agent install` now blocks Codex commits and pushes with a
+  native hook.** Before, Codex got only a block of text in `AGENTS.md`, and
+  nothing stopped a `git commit` when the audit failed. Now the install
+  writes a PreToolUse handler to `.codex/hooks.json` and the same gate
+  script that Claude Code uses to `.codex/hooks/fallow-gate.sh`. The handler
+  walks up from the session directory to the nearest install root and runs
+  the audit there, so a session in a subdirectory is also checked. The walk
+  stops at the first `.git` entry, so a nested worktree does not use the gate
+  of the checkout around it. When no gate script is found, the handler
+  exits 0 without output. The install merges the handler into an existing
+  `.codex/hooks.json` and keeps all other hooks. `uninstall` removes only
+  the fallow handler and script, and deletes `.codex/hooks.json` when
+  nothing else is left in it. `--dry-run`, `--force` and `--user` work as
+  they do for Claude Code. With `--user`, the gate goes to
+  `~/.codex/hooks.json`. Codex runs a hook only after you trust it in
+  `/hooks`. `fallow agent status` shows the new gate as its own row, and
+  `fallow hooks status --format json` adds a `codex_gate` surface. The
+  `AGENTS.md` block is now routing guidance: it tells agents to use fallow
+  and names the hook as the enforcement layer. `fallow hooks install --target
+  agent --agent codex --user` now writes the user gate and no longer writes the project
+  `AGENTS.md` block.
+
+### Changed
+
+- **The Claude Code gate audits the install root from a subdirectory.**
+  Before, the handler ran the gate script from the session directory. A
+  session in a package directory then audited only that package and could
+  pass a commit that the audit of the project blocks. The handler now walks
+  up to the nearest directory that holds `.claude/hooks/fallow-gate.sh` and
+  runs the audit there. The walk stops at the first `.git` entry. When it
+  finds no script, the handler runs the script under `$CLAUDE_PROJECT_DIR`,
+  as before. Run `fallow agent install` again to get the new handler.
+- **`fallow hooks install --target agent` no longer selects Codex because of
+  `AGENTS.md` alone.** Cursor and fallow also write that file. A `.codex/`
+  directory now selects Codex, the same rule that `fallow agent install`
+  uses.
+
 ### Fixed
 
 - **Fallow reads a loose `deno.json` like Deno does.** Deno runs a config
