@@ -585,8 +585,13 @@ pub fn find_unused_dependencies(
     let scan = build_unused_dependency_scan(graph, config, plugin_result, workspaces);
     let shared = scan.root_shared(config);
 
+    let linked_workspaces = fallow_config::link_only_workspace_dependencies(
+        &config.root,
+        &config.ignore_patterns,
+        workspaces,
+    );
     let (mut unused_deps, mut unused_dev_deps, mut unused_optional_deps) =
-        collect_root_unused_dependencies(pkg, config, &shared, &scan.usage);
+        collect_root_unused_dependencies(pkg, config, &shared, &scan.usage, &linked_workspaces);
     let root_flagged =
         root_flagged_dependencies(&unused_deps, &unused_dev_deps, &unused_optional_deps);
 
@@ -728,11 +733,15 @@ fn collect_root_unused_dependencies(
     config: &ResolvedConfig,
     shared: &SharedDepSets<'_>,
     usage: &DependencyUsageIndices<'_>,
+    linked_workspaces: &FxHashSet<String>,
 ) -> UnusedDependencyTriple {
     let root_pkg_path = config.root.join("package.json");
     let root_pkg_content = read_pkg_json_content(&root_pkg_path);
-    let is_used_globally =
-        |dep: &str| usage.used_packages.contains(dep) || usage.root_peer_used.contains(dep);
+    let is_used_globally = |dep: &str| {
+        usage.used_packages.contains(dep)
+            || usage.root_peer_used.contains(dep)
+            || linked_workspaces.contains(dep)
+    };
 
     collect_root_unused_categories(
         pkg,

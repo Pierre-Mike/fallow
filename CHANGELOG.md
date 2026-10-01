@@ -106,6 +106,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   only, and `apps/` matches an `apps` directory at any depth. For the same
   reason, `/*` owns only the files at the repository root. Use `*` for a
   catch-all rule.
+- **A root `link:` or `file:` dependency on a local package now makes that
+  package a workspace.** Older yarn monorepos, such as Kibana before its move
+  to pnpm, have no `workspaces` field. The root `package.json` lists each
+  package as `"@kbn/foo": "link:packages/foo"`, often three to five
+  directories deep. Before, fallow did not find these packages. Without
+  tsconfig `paths`, an import of `@kbn/foo` resolved as an external package,
+  and the files of the package became unused files. Now each `link:` or
+  `file:` target inside the project root that holds a `package.json` is a
+  workspace. This applies in every repository, also in a repository with a
+  `workspaces` field or a `pnpm-workspace.yaml`. A linked package outside the
+  declared patterns is now a workspace too. Fallow skips a target outside the
+  project root and a missing target. Fallow also skips a target that source
+  discovery does not read: a hidden directory such as `.yalc`,
+  `node_modules`, `build`, `dist`, `coverage`, or a path that
+  `ignorePatterns` matches. Such a package stays an external package, as
+  before. When the root `link:` entry is the only declaration of the
+  package, fallow does not report the entry as an unused dependency. When a
+  workspace pattern or a tsconfig reference also declares the package,
+  fallow reports an unused entry, as before.
 - **The editor Code Lens above an export shows "imported by N files".**
   Before, the lens said "N references". The TypeScript lens uses the same
   words, but it counts all uses, also uses in the same file. So the editor
