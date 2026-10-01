@@ -78,7 +78,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `setupFilesAfterEnv`, `globalSetup` and `globalTeardown`. Thus it
   reported the setup file as unused. Now fallow replaces the token with the
   `rootDir` option, which it resolves against the config directory. When the
-  option is absent, the token is the config directory, as in Jest.
+  option is absent, the token is the config directory, as in Jest. The
+  same token in a string `projects` entry now also uses the `rootDir`
+  option. Before, it used the project root, so fallow did not find the
+  projects of a nested Jest config. In an inline project
+  (`projects: [{ ... }]`), the token now resolves against the `rootDir` of
+  that project. As in Jest, the default `rootDir` of an inline project is
+  the directory of the parent config.
 
 - **Fallow reads a loose `deno.json` like Deno does.** Deno runs a config
   with single quotes, unquoted keys or a missing comma. Before, fallow
@@ -119,12 +125,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   declared patterns is now a workspace too. Fallow skips a target outside the
   project root and a missing target. Fallow also skips a target that source
   discovery does not read: a hidden directory such as `.yalc`,
-  `node_modules`, `build`, `dist`, `coverage`, or a path that
-  `ignorePatterns` matches. Such a package stays an external package, as
-  before. When the root `link:` entry is the only declaration of the
-  package, fallow does not report the entry as an unused dependency. When a
-  workspace pattern or a tsconfig reference also declares the package,
-  fallow reports an unused entry, as before.
+  `node_modules`, `build`, `dist`, `coverage`, a path that `ignorePatterns`
+  matches, or a gitignored path. The gitignore check uses the same rules as
+  source discovery, so a nested `.gitignore` and `.git/info/exclude` also
+  apply. Such a package stays an external package, as before. When the root
+  `link:` entry is the only declaration of the package, fallow does not
+  report the entry as an unused dependency. When a workspace pattern or a
+  tsconfig reference also declares the package, fallow reports an unused
+  entry, as before.
 - **A failed run now says which gate set exit code 1.** Before, `fallow
   health --format json --quiet` exited 1 for a complexity finding and printed
   nothing on stderr. The `complexity-*` rules default to `error`, so one
