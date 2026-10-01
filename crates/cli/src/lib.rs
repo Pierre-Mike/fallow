@@ -129,7 +129,7 @@ use cli_telemetry::TelemetryRun;
 #[cfg(test)]
 use cli_telemetry::{fallback_failure_reason_for, telemetry_workflow_for_command};
 use cli_telemetry::{record_run_epilogue, start_telemetry_run};
-use dupes::{DupesMode, DupesOptions};
+use dupes::{DupesMode, DupesOptions, DupesOverrides};
 use error::emit_error;
 use health::{HealthOptions, SortBy};
 use list::ListOptions;
@@ -764,6 +764,28 @@ impl Cli {
             Some(true)
         } else {
             None
+        }
+    }
+
+    /// The global `--dupes-*` overrides of the `duplicates` config.
+    const fn dupes_overrides(&self) -> DupesOverrides {
+        DupesOverrides {
+            mode: self.dupes_mode,
+            near: self.dupes_near,
+            threshold: self.dupes_threshold,
+            min_tokens: self.dupes_min_tokens,
+            min_lines: self.dupes_min_lines,
+            min_occurrences: self.dupes_min_occurrences,
+            skip_local: self.dupes_skip_local,
+            ignore_symlinks: resolve_negatable_flag(
+                self.dupes_ignore_symlinks,
+                self.dupes_no_ignore_symlinks,
+            ),
+            cross_language: self.dupes_cross_language,
+            ignore_imports: resolve_negatable_flag(
+                self.dupes_ignore_imports,
+                self.dupes_no_ignore_imports,
+            ),
         }
     }
 }
@@ -3142,28 +3164,8 @@ fn unsupported_security_global(cli: &Cli) -> Option<&'static str> {
         Some("--regression-baseline")
     } else if cli.save_regression_baseline.is_some() {
         Some("--save-regression-baseline")
-    } else if cli.dupes_mode.is_some() {
-        Some("--dupes-mode")
-    } else if cli.dupes_threshold.is_some() {
-        Some("--dupes-threshold")
-    } else if cli.dupes_min_tokens.is_some() {
-        Some("--dupes-min-tokens")
-    } else if cli.dupes_min_lines.is_some() {
-        Some("--dupes-min-lines")
-    } else if cli.dupes_min_occurrences.is_some() {
-        Some("--dupes-min-occurrences")
-    } else if cli.dupes_skip_local {
-        Some("--dupes-skip-local")
-    } else if cli.dupes_ignore_symlinks {
-        Some("--dupes-ignore-symlinks")
-    } else if cli.dupes_no_ignore_symlinks {
-        Some("--dupes-no-ignore-symlinks")
-    } else if cli.dupes_cross_language {
-        Some("--dupes-cross-language")
-    } else if cli.dupes_ignore_imports {
-        Some("--dupes-ignore-imports")
-    } else if cli.dupes_no_ignore_imports {
-        Some("--dupes-no-ignore-imports")
+    } else if let Some(flag) = cli.dupes_overrides().first_global_flag() {
+        Some(flag)
     } else if cli.include_entry_exports {
         Some("--include-entry-exports")
     } else {
@@ -3847,6 +3849,7 @@ fn run_doctor_command_if_requested(cli: &Cli, format: &FormatConfig) -> Option<E
 /// analysis flags avoids implying that a readiness check ran an analysis or
 /// applied a gate that it deliberately bypasses.
 fn unsupported_doctor_option(cli: &Cli) -> Option<&'static str> {
+    let dupes_flag = cli.dupes_overrides().first_global_flag();
     [
         (cli.allow_remote_extends, "--allow-remote-extends"),
         (cli.no_cache, "--no-cache"),
@@ -3891,21 +3894,7 @@ fn unsupported_doctor_option(cli: &Cli) -> Option<&'static str> {
         ),
         (!cli.only.is_empty(), "--only"),
         (!cli.skip.is_empty(), "--skip"),
-        (cli.dupes_mode.is_some(), "--dupes-mode"),
-        (cli.dupes_near, "--dupes-near"),
-        (cli.dupes_threshold.is_some(), "--dupes-threshold"),
-        (cli.dupes_min_tokens.is_some(), "--dupes-min-tokens"),
-        (cli.dupes_min_lines.is_some(), "--dupes-min-lines"),
-        (
-            cli.dupes_min_occurrences.is_some(),
-            "--dupes-min-occurrences",
-        ),
-        (cli.dupes_skip_local, "--dupes-skip-local"),
-        (cli.dupes_ignore_symlinks, "--dupes-ignore-symlinks"),
-        (cli.dupes_no_ignore_symlinks, "--dupes-no-ignore-symlinks"),
-        (cli.dupes_cross_language, "--dupes-cross-language"),
-        (cli.dupes_ignore_imports, "--dupes-ignore-imports"),
-        (cli.dupes_no_ignore_imports, "--dupes-no-ignore-imports"),
+        (dupes_flag.is_some(), dupes_flag.unwrap_or_default()),
         (cli.score, "--score"),
         (cli.trend, "--trend"),
         (cli.save_snapshot.is_some(), "--save-snapshot"),
@@ -4091,22 +4080,7 @@ fn run_combined_scoped(
         run_check: analyses.run_check,
         run_dupes: analyses.run_dupes,
         run_health: analyses.run_health,
-        dupes_mode: cli.dupes_mode,
-        dupes_near: cli.dupes_near,
-        dupes_threshold: cli.dupes_threshold,
-        dupes_min_tokens: cli.dupes_min_tokens,
-        dupes_min_lines: cli.dupes_min_lines,
-        dupes_min_occurrences: cli.dupes_min_occurrences,
-        dupes_skip_local: cli.dupes_skip_local,
-        dupes_ignore_symlinks: resolve_negatable_flag(
-            cli.dupes_ignore_symlinks,
-            cli.dupes_no_ignore_symlinks,
-        ),
-        dupes_cross_language: cli.dupes_cross_language,
-        dupes_ignore_imports: resolve_negatable_flag(
-            cli.dupes_ignore_imports,
-            cli.dupes_no_ignore_imports,
-        ),
+        dupes: cli.dupes_overrides(),
         score: cli.score || cli.trend,
         trend: cli.trend,
         save_snapshot: cli.save_snapshot.as_ref(),
@@ -5008,18 +4982,18 @@ fn dispatch_dupes_command(command: Command, dispatch: &DispatchContext<'_>) -> E
     dispatch_dupes(
         dispatch,
         &DupesDispatchArgs {
-            mode,
-            near,
-            min_tokens,
-            min_lines,
-            min_occurrences,
-            threshold,
-            skip_local,
-            ignore_symlinks,
-            no_ignore_symlinks,
-            cross_language,
-            ignore_imports,
-            no_ignore_imports,
+            overrides: DupesOverrides {
+                mode,
+                near,
+                threshold,
+                min_tokens,
+                min_lines,
+                min_occurrences,
+                skip_local,
+                ignore_symlinks: resolve_negatable_flag(ignore_symlinks, no_ignore_symlinks),
+                cross_language,
+                ignore_imports: resolve_negatable_flag(ignore_imports, no_ignore_imports),
+            },
             top,
             no_fragments,
             trace,
@@ -6276,7 +6250,7 @@ fn validate_type_aware_check_options(
 /// `true`).
 /// Resolve a `--flag` / `--no-flag` pair: `Some(false)` for the opt-out,
 /// `Some(true)` for the opt-in, `None` to defer to config.
-fn resolve_negatable_flag(opt_in: bool, opt_out: bool) -> Option<bool> {
+const fn resolve_negatable_flag(opt_in: bool, opt_out: bool) -> Option<bool> {
     if opt_out {
         Some(false)
     } else if opt_in {
@@ -6287,18 +6261,7 @@ fn resolve_negatable_flag(opt_in: bool, opt_out: bool) -> Option<bool> {
 }
 
 struct DupesDispatchArgs {
-    mode: Option<DupesMode>,
-    near: bool,
-    min_tokens: Option<usize>,
-    min_lines: Option<usize>,
-    min_occurrences: Option<usize>,
-    threshold: Option<f64>,
-    skip_local: bool,
-    ignore_symlinks: bool,
-    no_ignore_symlinks: bool,
-    cross_language: bool,
-    ignore_imports: bool,
-    no_ignore_imports: bool,
+    overrides: DupesOverrides,
     top: Option<usize>,
     no_fragments: bool,
     trace: Option<String>,
@@ -6338,16 +6301,7 @@ fn dispatch_dupes_run(
         threads: dispatch.threads,
         quiet,
         allow_remote_extends: cli.allow_remote_extends,
-        mode: args.mode,
-        near: args.near,
-        min_tokens: args.min_tokens,
-        min_lines: args.min_lines,
-        min_occurrences: args.min_occurrences,
-        threshold: args.threshold,
-        skip_local: args.skip_local,
-        ignore_symlinks: resolve_negatable_flag(args.ignore_symlinks, args.no_ignore_symlinks),
-        cross_language: args.cross_language,
-        ignore_imports: resolve_negatable_flag(args.ignore_imports, args.no_ignore_imports),
+        overrides: args.overrides,
         top: args.top,
         baseline_path: cli.baseline.as_deref(),
         baseline_flag: "--baseline",
@@ -7405,6 +7359,56 @@ mod tests {
         }
     }
 
+    /// Every global `--dupes-*` override flag only applies to a duplication
+    /// run. `security`, `doctor` and `similar-code` must reject each one, and
+    /// the security help must hide each one.
+    #[test]
+    fn every_global_dupes_override_is_rejected_where_dupes_does_not_run() {
+        let longs: Vec<String> = <Cli as clap::CommandFactory>::command()
+            .get_arguments()
+            .filter_map(|arg| arg.get_long())
+            .filter(|long| long.starts_with("dupes-") && *long != "dupes-baseline")
+            .map(str::to_owned)
+            .collect();
+        assert!(
+            longs.len() > 1,
+            "expected global --dupes-* flags, got {longs:?}"
+        );
+        let security_help = render_security_help(SecurityHelpTarget::Parent);
+
+        for long in &longs {
+            let flag = format!("--{long}");
+            let takes_value = <Cli as clap::CommandFactory>::command()
+                .get_arguments()
+                .find(|arg| arg.get_long() == Some(long.as_str()))
+                .is_some_and(|arg| arg.get_action().takes_values());
+            let value = if long == "dupes-mode" { "weak" } else { "3" };
+            let argv_for = |command: &[&str]| {
+                let mut argv = vec!["fallow"];
+                argv.extend_from_slice(command);
+                argv.push(flag.as_str());
+                if takes_value {
+                    argv.push(value);
+                }
+                Cli::try_parse_from(argv).expect("global dupes flag parses")
+            };
+
+            let security = argv_for(&["security"]);
+            assert_eq!(unsupported_security_global(&security), Some(flag.as_str()));
+            let doctor = argv_for(&["doctor"]);
+            assert_eq!(unsupported_doctor_option(&doctor), Some(flag.as_str()));
+            let similar_code = argv_for(&["similar-code", "status"]);
+            assert_eq!(
+                similar_code_help::unsupported_similar_code_option(&similar_code),
+                Some(flag.as_str())
+            );
+            assert!(
+                !help_contains_long_flag(&security_help, long),
+                "security help must hide unsupported {flag}:\n{security_help}"
+            );
+        }
+    }
+
     #[test]
     fn security_help_hides_globals_rejected_by_security_validator() {
         let help = render_security_help(SecurityHelpTarget::Parent);
@@ -7506,6 +7510,7 @@ mod tests {
                 vec!["fallow", "security", "--dupes-mode", "weak"],
                 "--dupes-mode",
             ),
+            (vec!["fallow", "security", "--dupes-near"], "--dupes-near"),
         ] {
             let cli = Cli::try_parse_from(argv).expect("security global parses before validation");
             assert_eq!(unsupported_security_global(&cli), Some(expected));
