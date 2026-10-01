@@ -127,18 +127,16 @@ pub use check::{
     serialize_check_grouped_json_output, serialize_check_json_output,
 };
 pub use ci_output::{
-    CiIssue, CiLocation, CiProvider, GroupedReviewIssues, MARKER_PREFIX_V2, MARKER_PREFIX_V3,
-    MARKER_SUFFIX_V2, MARKER_SUFFIX_V3, MAX_COMMENT_BODY_BYTES, PROJECT_LEVEL_RULE_IDS,
-    PrCommentRenderInput, ReviewCommentRenderInput, ReviewEnvelopeRenderInput,
-    ReviewEnvelopeRenderResult, ReviewEnvelopeTruncation, ReviewGitlabDiffRefs, apply_path_prefix,
-    cap_body_with_marker, command_title, composite_fingerprint, escape_md, github_check_conclusion,
+    CiIssue, CiLocation, CiProvider, GroupedReviewIssues, MARKER_PREFIX_V3, MARKER_SUFFIX_V3,
+    MAX_COMMENT_BODY_BYTES, PROJECT_LEVEL_RULE_IDS, PrCommentRenderInput, ReviewCommentRenderInput,
+    ReviewEnvelopeRenderInput, ReviewEnvelopeRenderResult, ReviewEnvelopeTruncation,
+    ReviewGitlabDiffRefs, apply_path_prefix, command_title, github_check_conclusion,
     group_review_issues_by_path_line, is_project_level_rule, issues_from_codeclimate,
     issues_from_codeclimate_issues, markdown_code_span, markdown_table_code_span,
     markdown_table_text, render_pr_comment, render_pr_comment_with_verdict,
     render_review_comment_for_group, render_review_envelope,
     render_review_envelope_with_conclusion, render_scoped_review_envelope,
-    render_scoped_review_envelope_with_conclusion, review_label_from_codeclimate,
-    summary_fingerprint, summary_label,
+    render_scoped_review_envelope_with_conclusion, summary_label,
 };
 pub use codeclimate::{
     CodeClimateAnnotationField, CodeClimateIssue, CodeClimateIssueInput, CodeClimateIssueKind,
@@ -237,15 +235,14 @@ pub use health_scores::{
     COGNITIVE_EXTRACTION_THRESHOLD, ClockProvenance, ClockSource, ComplexityViolation,
     ComponentRollup, ContributorEntry, ContributorIdentifierFormat, CoverageSource,
     CoverageSourceConsistency, CoverageTier, DEFAULT_COGNITIVE_CRITICAL, DEFAULT_COGNITIVE_HIGH,
-    DEFAULT_CRAP_CRITICAL, DEFAULT_CRAP_HIGH, DEFAULT_CYCLOMATIC_CRITICAL, DEFAULT_CYCLOMATIC_HIGH,
-    DEFAULT_MAX_UNIT_SIZE, ExceededThreshold, FileHealthScore, FindingSeverity,
-    HEALTH_SCORE_FORMULA_VERSION, HOTSPOT_SCORE_THRESHOLD, HealthConfiguredThresholds,
-    HealthEffectiveThresholds, HealthScore, HealthScorePenalties, HealthSummary, HotspotEntry,
-    HotspotSummary, LargeFunctionEntry, MI_DENSITY_MIN_LINES, OwnershipMetrics, OwnershipState,
-    ReactHookProfile, STYLING_HEALTH_FORMULA_VERSION, StylingHealth, StylingHealthConfidence,
-    StylingHealthPenalties, ThresholdOverrideDimension, ThresholdOverrideMetrics,
-    ThresholdOverrideState, ThresholdOverrideStatus, ThresholdSource, compute_finding_severity,
-    letter_grade, summarize_coverage_source_consistency,
+    DEFAULT_CYCLOMATIC_CRITICAL, DEFAULT_CYCLOMATIC_HIGH, ExceededThreshold, FileHealthScore,
+    FindingSeverity, HEALTH_SCORE_FORMULA_VERSION, HOTSPOT_SCORE_THRESHOLD,
+    HealthConfiguredThresholds, HealthEffectiveThresholds, HealthScore, HealthScorePenalties,
+    HealthSummary, HotspotEntry, HotspotSummary, LargeFunctionEntry, MI_DENSITY_MIN_LINES,
+    OwnershipMetrics, OwnershipState, ReactHookProfile, STYLING_HEALTH_FORMULA_VERSION,
+    StylingHealth, StylingHealthConfidence, StylingHealthPenalties, ThresholdOverrideDimension,
+    ThresholdOverrideMetrics, ThresholdOverrideState, ThresholdOverrideStatus, ThresholdSource,
+    compute_finding_severity, letter_grade, summarize_coverage_source_consistency,
 };
 pub use health_targets::{
     CloneSiblingEvidence, Confidence, ContributingFactor, DirectCallerEvidence,
@@ -271,7 +268,7 @@ pub use inspect_envelopes::{
 };
 pub use issue_contract::{
     ACTIONS_AUTO_FIXABLE_FIELD_DEFINITION, ACTIONS_FIELD_DEFINITION, CHECK_DOCS,
-    CODECLIMATE_RESULT_CODES, IssueOutputContract, TsAliasMeta, check_meta, dead_code_docs_url,
+    CODECLIMATE_RESULT_CODES, IssueOutputContract, TsAliasMeta, check_meta,
     issue_output_contract_by_code, issue_output_contracts, rule_docs_url,
 };
 pub use json_paths::{normalize_uri, strip_root_prefix};
@@ -298,9 +295,7 @@ pub use pr_decision::{
     PrDecisionDetails, PrDecisionGate, PrDecisionSurface,
 };
 pub use pr_details::{PR_DETAILS_SCHEMA, PrDetailsArtifact, PrDetailsRow, PrDetailsSection};
-pub use pr_status::{
-    PrStatusContext, PrStatusMode, pr_status_contexts, pr_status_contexts_with_mode,
-};
+pub use pr_status::{PrStatusContext, PrStatusMode, pr_status_contexts_with_mode};
 pub use pr_summary::{
     PrCommentLayout, PrSummaryArea, PrSummaryFinding, PrSummaryInput, PrSummaryScope,
     PrSummaryStatus, render_pr_summary,
@@ -312,20 +307,18 @@ pub use report_contract::{
 pub use request_outcomes::{RequestName, RequestOutcome, RequestOutcomes, RequestStatus};
 pub use review_envelopes::{
     GitHubReviewComment, GitHubReviewSide, GitLabReviewComment, GitLabReviewPosition,
-    GitLabReviewPositionType, MARKER_REGEX_V2, MARKER_REGEX_V3, ReviewCheckConclusion,
-    ReviewComment, ReviewEnvelopeEvent, ReviewEnvelopeMeta, ReviewEnvelopeOutput,
-    ReviewEnvelopeSchema, ReviewEnvelopeSummary, ReviewEnvelopeWireOutput, ReviewId,
-    ReviewProvider, ReviewReconcileOutput, ReviewReconcileSchema, body_matches_review_id,
-    default_marker_regex, default_marker_regex_flags, is_false, parse_review_id_marker,
-    review_id_marker, serialize_review_envelope_json_output,
+    GitLabReviewPositionType, MARKER_REGEX_V3, ReviewCheckConclusion, ReviewComment,
+    ReviewEnvelopeEvent, ReviewEnvelopeMeta, ReviewEnvelopeOutput, ReviewEnvelopeSchema,
+    ReviewEnvelopeSummary, ReviewEnvelopeWireOutput, ReviewId, ReviewProvider,
+    ReviewReconcileOutput, ReviewReconcileSchema, body_matches_review_id, is_false,
+    parse_review_id_marker, review_id_marker, serialize_review_envelope_json_output,
     serialize_review_reconcile_json_output, serialize_scoped_review_envelope_json_output,
     validate_review_body_scope,
 };
 pub use root_envelopes::{
     AUDIT_SCHEMA_VERSION, AuditCommand, AuditOutput, COMBINED_SCHEMA_VERSION, CombinedMeta,
-    CombinedOutput, FallowOutput, apply_root_kind, attach_telemetry_meta,
-    serialize_audit_json_output, serialize_combined_json_output, serialize_json_root_output,
-    serialize_named_json_output,
+    CombinedOutput, FallowOutput, attach_telemetry_meta, serialize_audit_json_output,
+    serialize_combined_json_output, serialize_json_root_output, serialize_named_json_output,
 };
 pub use sarif::{
     GHAS_SARIF_FINGERPRINT_KEY, SARIF_FINDING_ID_KEY, SARIF_FINGERPRINT_KEY, SarifDocumentInput,
