@@ -186,6 +186,11 @@ pub enum WorkspaceDiagnosticKind {
     /// object. Bun applies `overrides` and ignores `resolutions`, so fallow
     /// reports the shadowed configuration without offering removal advice.
     BunResolutionsShadowedByOverrides,
+    /// pnpm 10 or earlier ignores the `overrides` section of
+    /// `pnpm-workspace.yaml` because the root `package.json` declares
+    /// non-empty `pnpm.overrides` or `resolutions`. pnpm does not print a
+    /// warning. Fallow reports no findings for the ignored entries.
+    PnpmWorkspaceOverridesIgnored,
     /// The project has no `node_modules` directory and is not a Deno project
     /// that legitimately runs without one. Analysis proceeds, but three things
     /// degrade silently: package `exports` and conditional exports cannot be
@@ -523,6 +528,7 @@ impl WorkspaceDiagnosticKind {
             Self::PnpmLockOverrideResolutionSkipped => "pnpm-lock-override-resolution-skipped",
             Self::NpmLockOverrideResolutionSkipped => "npm-lock-override-resolution-skipped",
             Self::BunResolutionsShadowedByOverrides => "bun-resolutions-shadowed-by-overrides",
+            Self::PnpmWorkspaceOverridesIgnored => "pnpm-workspace-overrides-ignored",
             Self::NodeModulesMissing => "node-modules-missing",
             Self::BoundariesNotConfigured => "boundaries-not-configured",
             Self::RulePacksNotConfigured => "rule-packs-not-configured",
@@ -614,6 +620,7 @@ impl WorkspaceDiagnosticKind {
             | Self::PnpmLockOverrideResolutionSkipped
             | Self::NpmLockOverrideResolutionSkipped
             | Self::BunResolutionsShadowedByOverrides
+            | Self::PnpmWorkspaceOverridesIgnored
             | Self::NodeModulesMissing
             | Self::NoSourceFilesAnalyzed { .. }
             | Self::FileScoresUnavailable { .. }
@@ -735,6 +742,7 @@ impl WorkspaceDiagnosticKind {
             | Self::PnpmLockOverrideResolutionSkipped
             | Self::NpmLockOverrideResolutionSkipped
             | Self::BunResolutionsShadowedByOverrides
+            | Self::PnpmWorkspaceOverridesIgnored
             | Self::NodeModulesMissing
             | Self::BoundariesNotConfigured
             | Self::RulePacksNotConfigured
@@ -779,6 +787,7 @@ impl WorkspaceDiagnosticKind {
             | Self::PnpmLockOverrideResolutionSkipped
             | Self::NpmLockOverrideResolutionSkipped
             | Self::BunResolutionsShadowedByOverrides
+            | Self::PnpmWorkspaceOverridesIgnored
             | Self::BoundariesNotConfigured
             | Self::RulePacksNotConfigured => true,
             Self::UndeclaredWorkspace
@@ -852,6 +861,7 @@ impl WorkspaceDiagnosticKind {
             | Self::PnpmLockOverrideResolutionSkipped
             | Self::NpmLockOverrideResolutionSkipped
             | Self::BunResolutionsShadowedByOverrides
+            | Self::PnpmWorkspaceOverridesIgnored
             | Self::NodeModulesMissing
             | Self::BoundariesNotConfigured
             | Self::RulePacksNotConfigured
@@ -904,6 +914,7 @@ impl WorkspaceDiagnosticKind {
             | Self::PnpmLockOverrideResolutionSkipped
             | Self::NpmLockOverrideResolutionSkipped
             | Self::BunResolutionsShadowedByOverrides
+            | Self::PnpmWorkspaceOverridesIgnored
             | Self::NodeModulesMissing
             | Self::BoundariesNotConfigured
             | Self::RulePacksNotConfigured
@@ -1406,6 +1417,11 @@ fn render_message(root: &Path, path: &Path, kind: &WorkspaceDiagnosticKind) -> S
              `overrides` and ignores `resolutions`. Move the intended pins into `overrides` or \
              remove the shadowed `resolutions` entries."
         ),
+        WorkspaceDiagnosticKind::PnpmWorkspaceOverridesIgnored => format!(
+            "pnpm 10 and earlier ignore the `overrides` in '{display}' because the root package.json \
+             declares `pnpm.overrides` or `resolutions`, so fallow does not check them. Move the \
+             entries into one source."
+        ),
         WorkspaceDiagnosticKind::NodeModulesMissing => format!(
             "'{display}' does not exist. Package exports and conditional exports cannot be read, \
              framework plugins that activate on an installed package stay inactive, and \
@@ -1878,6 +1894,19 @@ mod tests {
         );
         assert_eq!(shadowed.kind.id(), "bun-resolutions-shadowed-by-overrides");
         assert!(shadowed.message.contains("ignores `resolutions`"));
+
+        let ignored = WorkspaceDiagnostic::new(
+            root,
+            root.join("pnpm-workspace.yaml"),
+            WorkspaceDiagnosticKind::PnpmWorkspaceOverridesIgnored,
+        );
+        assert_eq!(ignored.kind.id(), "pnpm-workspace-overrides-ignored");
+        assert!(ignored.message.contains("pnpm-workspace.yaml"));
+        assert!(
+            ignored
+                .message
+                .contains("pnpm 10 and earlier ignore the `overrides`")
+        );
     }
 
     #[test]
@@ -1911,6 +1940,7 @@ mod tests {
             WorkspaceDiagnosticKind::PnpmLockOverrideResolutionSkipped,
             WorkspaceDiagnosticKind::NpmLockOverrideResolutionSkipped,
             WorkspaceDiagnosticKind::BunResolutionsShadowedByOverrides,
+            WorkspaceDiagnosticKind::PnpmWorkspaceOverridesIgnored,
         ];
         for kind in &analysis_stage {
             assert!(
@@ -2199,6 +2229,7 @@ mod tests {
             WorkspaceDiagnosticKind::PnpmLockOverrideResolutionSkipped,
             WorkspaceDiagnosticKind::NpmLockOverrideResolutionSkipped,
             WorkspaceDiagnosticKind::BunResolutionsShadowedByOverrides,
+            WorkspaceDiagnosticKind::PnpmWorkspaceOverridesIgnored,
             WorkspaceDiagnosticKind::NodeModulesMissing,
             WorkspaceDiagnosticKind::BoundariesNotConfigured,
             WorkspaceDiagnosticKind::RulePacksNotConfigured,
@@ -2242,6 +2273,7 @@ mod tests {
             WorkspaceDiagnosticKind::PnpmLockOverrideResolutionSkipped,
             WorkspaceDiagnosticKind::NpmLockOverrideResolutionSkipped,
             WorkspaceDiagnosticKind::BunResolutionsShadowedByOverrides,
+            WorkspaceDiagnosticKind::PnpmWorkspaceOverridesIgnored,
         ] {
             assert!(
                 !kind.is_source_walk_recorded(),
