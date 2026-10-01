@@ -44,6 +44,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   installed npm package has no `fallow-setup` skill, `agent install` writes
   the copy that is embedded in the binary.
 
+- **Claude Code plugin hint.** Inside a Claude Code session, `fallow` writes
+  one `<claude-code-hint v="1" type="plugin" value="fallow@claude-plugins-official" />`
+  line to stderr. Claude Code removes the line from the command output and
+  asks the user to install the plugin. Fallow writes the hint only for human
+  output without `--quiet`, outside CI, at most once per process, and only
+  when the project and the user have no Fallow plugin or skill for Claude
+  Code. The `agent` and `hooks` commands never write the hint. Fallow never
+  writes the hint to stdout. Set `FALLOW_CLAUDE_CODE_HINT=off` to suppress
+  it. `FALLOW_SUGGESTIONS=off` also suppresses it. Claude Code shows the
+  prompt only for plugins in an official marketplace, so the hint has no
+  effect until that marketplace lists the Fallow plugin.
+
 ### Changed
 
 - **The Claude Code gate audits the install root from a subdirectory.**

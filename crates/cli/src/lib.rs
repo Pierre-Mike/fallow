@@ -41,6 +41,7 @@ mod cache_notice;
 mod check;
 mod ci;
 mod ci_template;
+mod claude_code_hint;
 mod cli_agent;
 mod cli_format;
 mod cli_hooks;
@@ -3416,7 +3417,7 @@ pub fn run() -> ExitCode {
     let (root, threads) = match validate_inputs(&cli, fmt.output, fmt.json_style) {
         Ok(v) => v,
         Err(code) => {
-            return record_run_epilogue(telemetry_run, code, None, cli.parent_run.as_deref());
+            return record_run_epilogue(telemetry_run, code, None, cli.parent_run.as_deref(), None);
         }
     };
 
@@ -3441,6 +3442,14 @@ pub fn run() -> ExitCode {
 
     let (save_regression_file, save_to_config) = regression_save_targets(&cli);
 
+    // The agent and hooks commands manage the Claude Code setup themselves.
+    // A plugin hint after `agent uninstall` would ask the user to install
+    // again at once, so these commands never write the hint.
+    let hint_root = (!matches!(
+        cli.command,
+        Some(Command::Agent { .. } | Command::Hooks { .. } | Command::SetupHooks { .. })
+    ))
+    .then_some(root.as_path());
     let command = cli.command.take();
     process_clock::record_startup();
     let dispatch = DispatchContext {
@@ -3459,7 +3468,13 @@ pub fn run() -> ExitCode {
         Ok(code) => code,
         Err(code) => return code,
     };
-    record_run_epilogue(telemetry_run, exit_code, None, cli.parent_run.as_deref())
+    record_run_epilogue(
+        telemetry_run,
+        exit_code,
+        None,
+        cli.parent_run.as_deref(),
+        hint_root,
+    )
 }
 
 /// Benchmark hook for the production fix dry-run pipeline. This is not a
