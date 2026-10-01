@@ -1599,6 +1599,15 @@ fn runtime_finding_row(it: &Value) -> String {
 
 fn render_health_complexity_only(env: &Value, complex: usize, elapsed: &str) -> String {
     let summary = env.get("summary").cloned().unwrap_or(Value::Null);
+    let above = u(&summary, "functions_above_threshold");
+    // The count comes before the baseline. A baseline that accepts every
+    // finding gives an empty list, and the run is clean.
+    let baselined = summary
+        .get("baseline_staleness")
+        .is_some_and(|value| !value.is_null());
+    if complex == 0 && above > 0 && !baselined {
+        return render_health_complexity_not_listed(&summary, above, elapsed);
+    }
     if complex == 0 {
         return format!(
             "## Fallow - Code Complexity\n\n> [!NOTE]\n> **No functions exceed complexity thresholds** \u{b7} {elapsed}ms\n\n{} functions analyzed (max cyclomatic: {}, max cognitive: {}, max CRAP: {})",
@@ -1608,7 +1617,6 @@ fn render_health_complexity_only(env: &Value, complex: usize, elapsed: &str) -> 
             threshold_or(&summary, "max_crap_threshold", "30"),
         );
     }
-    let above = u(&summary, "functions_above_threshold");
     let findings: Vec<&Value> = arr(env, "findings").collect();
     let tail = if complex > 25 {
         format!(
@@ -1624,6 +1632,20 @@ fn render_health_complexity_only(env: &Value, complex: usize, elapsed: &str) -> 
         if above == 1 { "s" } else { "" },
         complexity_rows(&findings, 25),
         health_thresholds_footer(env),
+    )
+}
+
+/// The run counted functions above a threshold but did not list them, for
+/// example a `--score` run. The summary gives the count, not a clean result.
+fn render_health_complexity_not_listed(summary: &Value, above: u64, elapsed: &str) -> String {
+    format!(
+        "## Fallow - Code Complexity\n\n> [!NOTE]\n> **{above} function{} exceed{} thresholds** \u{b7} {elapsed}ms\n\n{} functions analyzed (max cyclomatic: {}, max cognitive: {}, max CRAP: {}). This run does not list the functions. Run `fallow health --complexity` to list them.",
+        if above == 1 { "" } else { "s" },
+        if above == 1 { "s" } else { "" },
+        num(summary, "functions_analyzed"),
+        num(summary, "max_cyclomatic_threshold"),
+        num(summary, "max_cognitive_threshold"),
+        threshold_or(summary, "max_crap_threshold", "30"),
     )
 }
 
@@ -1772,7 +1794,7 @@ fn render_health_summary(env: &Value) -> String {
     if groups.is_empty() {
         format!("{}{body}", health_score_header(env))
     } else {
-        format!("{}{body}\n{groups}", health_score_header(env))
+        format!("{}{body}\n\n{groups}", health_score_header(env))
     }
 }
 
@@ -3182,7 +3204,64 @@ mod tests {
 
     use fallow_types::issue_meta::counted_result_issue_metas;
 
-    use super::DEAD_CODE_CATEGORIES;
+    use super::{DEAD_CODE_CATEGORIES, render_health_summary};
+
+    /// A run without a finding list (for example `--score`) still counts the
+    /// functions above a threshold. The summary must give that count.
+    #[test]
+    fn health_summary_counts_unlisted_functions() {
+        let envelope = |above: u64| {
+            serde_json::json!({
+                "elapsed_ms": 1,
+                "summary": {
+                    "functions_analyzed": 5,
+                    "functions_above_threshold": above,
+                    "max_cyclomatic_threshold": 20,
+                    "max_cognitive_threshold": 15,
+                    "max_crap_threshold": 30.0
+                }
+            })
+        };
+        let out = render_health_summary(&envelope(1));
+        assert!(out.contains("**1 function exceeds thresholds**"), "{out}");
+        assert!(out.contains("`fallow health --complexity`"), "{out}");
+        assert!(!out.contains("No functions exceed"), "{out}");
+        let out = render_health_summary(&envelope(0));
+        assert!(
+            out.contains("**No functions exceed complexity thresholds**"),
+            "{out}"
+        );
+    }
+
+    /// The count comes before the baseline. When the baseline accepts every
+    /// finding, the run is clean and the summary must not ask for a rerun.
+    #[test]
+    fn health_summary_keeps_a_baselined_run_clean() {
+        let envelope = serde_json::json!({
+            "elapsed_ms": 1,
+            "findings": [],
+            "summary": {
+                "functions_analyzed": 5,
+                "functions_above_threshold": 1,
+                "max_cyclomatic_threshold": 20,
+                "max_cognitive_threshold": 15,
+                "max_crap_threshold": 30.0,
+                "baseline_staleness": {
+                    "baseline_entries": 2,
+                    "matched_entries": 2,
+                    "stale_entries": 0,
+                    "current_findings": 1,
+                    "stale": false
+                }
+            }
+        });
+        let out = render_health_summary(&envelope);
+        assert!(
+            out.contains("**No functions exceed complexity thresholds**"),
+            "{out}"
+        );
+        assert!(!out.contains("--complexity"), "{out}");
+    }
 
     /// Every counted dead-code kind needs a summary row with the registry
     /// label and docs anchor, and every summary row needs a registry kind.
