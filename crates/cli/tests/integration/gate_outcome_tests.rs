@@ -481,6 +481,24 @@ fn save_regression_baseline(root: &Path, file: &str) {
     );
 }
 
+/// A project with one unreferenced module, a regression baseline of that
+/// state, and four more unreferenced modules, so `--fail-on-regression
+/// --tolerance 0` fails. Returns the project and the baseline path.
+fn regressed_orphan_project() -> (TempDir, std::path::PathBuf) {
+    let project = orphan_project(1);
+    let root = project.path();
+    let baseline = root.join("regression.json");
+    save_regression_baseline(root, baseline.to_str().expect("utf8"));
+    for index in 1..5 {
+        std::fs::write(
+            root.join(format!("src/orphan{index}.ts")),
+            format!("export const orphan{index} = (): number => {index};\n"),
+        )
+        .expect("more orphans");
+    }
+    (project, baseline)
+}
+
 /// The default exit rule of each command, which its envelope always carries.
 /// `dupes` has none: a run with no armed gate always exits 0.
 const DEFAULT_RULES: &[(&str, &str)] = &[
@@ -1014,18 +1032,9 @@ fn the_security_entry_agrees_with_the_gate_verdict_and_exit_8() {
 /// a grouped run the index is the only channel the verdict has.
 #[test]
 fn the_grouped_envelope_carries_the_verdict_it_has_no_other_field_for() {
-    let project = orphan_project(1);
+    let (project, baseline) = regressed_orphan_project();
     let root = project.path();
-    let baseline = root.join("regression.json");
     let baseline_arg = baseline.to_str().expect("utf8");
-    save_regression_baseline(root, baseline_arg);
-    for index in 1..5 {
-        std::fs::write(
-            root.join(format!("src/orphan{index}.ts")),
-            format!("export const orphan{index} = (): number => {index};\n"),
-        )
-        .expect("more orphans");
-    }
 
     let envelope = parse_json(&run(&[
         "dead-code",
@@ -1143,18 +1152,9 @@ fn the_empty_case_reports_without_an_exclusion_to_blame() {
 /// deliberately does not.
 #[test]
 fn report_from_states_the_verdict_and_still_exits_zero() {
-    let project = orphan_project(1);
+    let (project, baseline) = regressed_orphan_project();
     let root = project.path();
-    let baseline = root.join("regression.json");
     let baseline_arg = baseline.to_str().expect("utf8");
-    save_regression_baseline(root, baseline_arg);
-    for index in 1..5 {
-        std::fs::write(
-            root.join(format!("src/orphan{index}.ts")),
-            format!("export const orphan{index} = (): number => {index};\n"),
-        )
-        .expect("more orphans");
-    }
     let produced = run(&[
         "dead-code",
         "--root",
@@ -1401,18 +1401,9 @@ fn fail_on_issues_passes_a_clean_combined_run() {
 /// a gate had failed.
 #[test]
 fn the_pull_request_comment_carries_the_same_verdict_as_the_job_summary() {
-    let project = orphan_project(1);
+    let (project, baseline) = regressed_orphan_project();
     let root = project.path();
-    let baseline = root.join("regression.json");
     let baseline_arg = baseline.to_str().expect("utf8");
-    save_regression_baseline(root, baseline_arg);
-    for index in 1..5 {
-        std::fs::write(
-            root.join(format!("src/orphan{index}.ts")),
-            format!("export const orphan{index} = (): number => {index};\n"),
-        )
-        .expect("more orphans");
-    }
     let produced = run(&[
         "dead-code",
         "--root",
@@ -2248,5 +2239,381 @@ fn a_tripped_gate_row_does_not_move_the_combined_check_run_conclusion() {
         sidecar["conclusion"], "failure",
         "the conclusion stays derived from the per-area rows: {}",
         sidecar["gates"]
+    );
+}
+
+/// The stderr line that names the gate behind a non-zero exit. The JSON
+/// envelope says which gate failed, but a CI log that shows only stderr and
+/// the exit code must say it too.
+const EXIT_REASON_MARKER: &str = "Exit code 1:";
+
+fn assert_exit_reason_names(output: &CommandOutput, gate_name: &str) {
+    assert!(
+        output.stderr.contains(EXIT_REASON_MARKER) && output.stderr.contains(gate_name),
+        "stderr must name the failed `{gate_name}` gate: {}",
+        output.stderr
+    );
+}
+
+fn assert_no_exit_reason(output: &CommandOutput) {
+    assert!(
+        !output.stderr.contains(EXIT_REASON_MARKER),
+        "a passing run has no exit reason: {}",
+        output.stderr
+    );
+}
+
+#[test]
+fn a_quiet_json_health_run_names_the_failed_gate_and_counts_its_findings() {
+    let complex = complex_project();
+    let output = run(&[
+        "health",
+        "--root",
+        root_arg(&complex),
+        "--complexity",
+        "--format",
+        "json",
+        "--quiet",
+    ]);
+    assert_eq!(output.code, 1, "{}", output.stderr);
+    let envelope = parse_json(&output);
+    let entry = gate(&envelope, "health-findings");
+    assert_eq!(entry["status"], "fail");
+    let findings = envelope["findings"].as_array().expect("findings").len();
+    assert!(findings > 0, "the fixture has a complex function");
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "a finding count never approaches the f64 integer limit"
+    )]
+    let expected = findings as f64;
+    assert_eq!(
+        entry["observed"].as_f64(),
+        Some(expected),
+        "{}",
+        envelope["gate_outcomes"]
+    );
+    assert_exit_reason_names(&output, "health-findings");
+}
+
+#[test]
+fn a_quiet_human_health_run_names_the_failed_gate() {
+    let complex = complex_project();
+    let output = run(&[
+        "health",
+        "--root",
+        root_arg(&complex),
+        "--complexity",
+        "--quiet",
+    ]);
+    assert_eq!(output.code, 1, "{}", output.stderr);
+    assert_exit_reason_names(&output, "health-findings");
+}
+
+#[test]
+fn a_report_only_health_run_prints_no_exit_reason() {
+    let complex = complex_project();
+    let output = run(&[
+        "health",
+        "--root",
+        root_arg(&complex),
+        "--complexity",
+        "--format",
+        "json",
+        "--quiet",
+        "--report-only",
+    ]);
+    assert_eq!(output.code, 0, "{}", output.stderr);
+    assert_no_exit_reason(&output);
+}
+
+/// A missing `node_modules` and a broken tsconfig `extends` are workspace
+/// diagnostics. They never change the exit code.
+#[test]
+fn workspace_diagnostics_do_not_fail_a_health_run() {
+    let dir = TempDir::new().expect("temp project");
+    let root = dir.path();
+    std::fs::create_dir_all(root.join("src")).expect("src dir");
+    std::fs::write(
+        root.join("package.json"),
+        r#"{"name":"diag-fx","version":"1.0.0","private":true,"dependencies":{"react":"18.0.0"}}"#,
+    )
+    .expect("package.json");
+    std::fs::write(
+        root.join("tsconfig.json"),
+        r#"{"extends":"./missing/tsconfig.base.json","compilerOptions":{"baseUrl":".","paths":{"@kbn/*":["src/*"]}}}"#,
+    )
+    .expect("tsconfig.json");
+    std::fs::write(
+        root.join("src/index.ts"),
+        "export const main = (): number => 1;\n",
+    )
+    .expect("index.ts");
+    let output = run(&[
+        "health",
+        "--root",
+        root.to_str().expect("utf8"),
+        "--format",
+        "json",
+        "--quiet",
+    ]);
+    assert_eq!(output.code, 0, "{}", output.stderr);
+    let envelope = parse_json(&output);
+    assert_eq!(gate(&envelope, "health-findings")["status"], "pass");
+    assert_no_exit_reason(&output);
+}
+
+#[test]
+fn a_quiet_json_dead_code_run_names_the_failed_gate() {
+    let project = orphan_project(1);
+    let output = run(&[
+        "dead-code",
+        "--root",
+        root_arg(&project),
+        "--format",
+        "json",
+        "--quiet",
+    ]);
+    assert_eq!(output.code, 1, "{}", output.stderr);
+    assert_exit_reason_names(&output, "error-severity-findings");
+}
+
+#[test]
+fn a_quiet_json_combined_run_names_the_failed_gate() {
+    let complex = complex_project();
+    let output = run(&[
+        "--root",
+        root_arg(&complex),
+        "--only",
+        "health",
+        "--format",
+        "json",
+        "--quiet",
+        "--fail-on-issues",
+    ]);
+    assert_eq!(output.code, 1, "{}", output.stderr);
+    assert_exit_reason_names(&output, "health-findings");
+}
+
+/// `--ci` and `--fail-on-issues` promote a `warn` rule to `error`, so the
+/// advice to set a rule to `warn` does not help there. The line names the
+/// flag instead.
+fn assert_fail_on_issues_hint(output: &CommandOutput, gate_name: &str) {
+    assert_exit_reason_names(output, gate_name);
+    assert!(
+        output.stderr.contains("Under --fail-on-issues"),
+        "the line must name the flag: {}",
+        output.stderr
+    );
+    assert!(
+        !output.stderr.contains("set its rule to") && !output.stderr.contains("complexity-crap to"),
+        "a `warn` rule does not help under --fail-on-issues: {}",
+        output.stderr
+    );
+}
+
+#[test]
+fn a_ci_dead_code_run_names_the_flag_in_the_exit_reason() {
+    let project = orphan_project(1);
+    let output = run(&["dead-code", "--root", root_arg(&project), "--ci"]);
+    assert_eq!(output.code, 1, "{}", output.stderr);
+    assert_fail_on_issues_hint(&output, "error-severity-findings");
+}
+
+#[test]
+fn a_quiet_combined_health_section_under_fail_on_issues_names_the_flag() {
+    let complex = complex_project();
+    let output = run(&[
+        "--root",
+        root_arg(&complex),
+        "--only",
+        "health",
+        "--quiet",
+        "--fail-on-issues",
+    ]);
+    assert_eq!(output.code, 1, "{}", output.stderr);
+    assert_fail_on_issues_hint(&output, "health-findings");
+}
+
+/// The stderr lines that state an exit reason.
+fn exit_reason_lines(output: &CommandOutput) -> Vec<&str> {
+    output
+        .stderr
+        .lines()
+        .filter(|line| line.contains(EXIT_REASON_MARKER))
+        .collect()
+}
+
+/// A project with one complex function and one unreferenced module, so the
+/// dead-code section and the health section of a bare run both fail.
+fn complex_project_with_orphan() -> TempDir {
+    let dir = complex_project();
+    std::fs::write(
+        dir.path().join("src/orphan.ts"),
+        "export const orphan = (): number => 1;\n",
+    )
+    .expect("orphan.ts");
+    dir
+}
+
+#[test]
+fn a_quiet_human_combined_run_prints_one_merged_exit_reason() {
+    let project = complex_project_with_orphan();
+    let output = run(&["--root", root_arg(&project), "--quiet"]);
+    assert_eq!(output.code, 1, "{}", output.stderr);
+    let lines = exit_reason_lines(&output);
+    assert_eq!(
+        lines.len(),
+        1,
+        "one line for the whole run: {}",
+        output.stderr
+    );
+    assert!(
+        lines[0].contains("error-severity-findings") && lines[0].contains("health-findings"),
+        "the line names the gates of every section: {}",
+        lines[0]
+    );
+}
+
+#[test]
+fn a_regression_gate_with_its_own_line_is_not_repeated_in_the_exit_reason() {
+    let (project, baseline) = regressed_orphan_project();
+    let root = project.path();
+    let baseline_arg = baseline.to_str().expect("utf8");
+
+    let output = run(&[
+        "dead-code",
+        "--root",
+        root.to_str().expect("utf8"),
+        "--format",
+        "json",
+        "--fail-on-regression",
+        "--tolerance",
+        "0",
+        "--regression-baseline",
+        baseline_arg,
+    ]);
+    assert_eq!(output.code, 1, "{}", output.stderr);
+    let lines = exit_reason_lines(&output);
+    assert_eq!(lines.len(), 1, "{}", output.stderr);
+    assert!(
+        lines[0].contains("error-severity-findings") && !lines[0].contains("regression"),
+        "the regression line is already on stderr: {}",
+        output.stderr
+    );
+}
+
+#[test]
+fn a_quiet_json_combined_run_names_a_failed_regression_gate() {
+    let (project, baseline) = regressed_orphan_project();
+    let root = project.path();
+    let baseline_arg = baseline.to_str().expect("utf8");
+
+    let output = run(&[
+        "--root",
+        root.to_str().expect("utf8"),
+        "--only",
+        "dead-code",
+        "--format",
+        "json",
+        "--quiet",
+        "--fail-on-regression",
+        "--tolerance",
+        "0",
+        "--regression-baseline",
+        baseline_arg,
+    ]);
+    assert_eq!(output.code, 1, "{}", output.stderr);
+    let lines = exit_reason_lines(&output);
+    assert_eq!(lines.len(), 1, "{}", output.stderr);
+    assert!(lines[0].contains("regression"), "{}", output.stderr);
+}
+
+#[test]
+fn the_error_severity_entry_counts_the_error_findings() {
+    let project = orphan_project(3);
+    let output = run(&[
+        "dead-code",
+        "--root",
+        root_arg(&project),
+        "--unused-files",
+        "--format",
+        "json",
+        "--quiet",
+    ]);
+    assert_eq!(output.code, 1, "{}", output.stderr);
+    let envelope = parse_json(&output);
+    let unused_files = envelope["unused_files"]
+        .as_array()
+        .expect("unused files")
+        .len();
+    assert_eq!(unused_files, 3, "{}", output.stdout);
+    let entry = gate(&envelope, "error-severity-findings");
+    assert_eq!(entry["observed"].as_f64(), Some(3.0), "{entry}");
+    assert_eq!(entry["threshold_label"], "error", "{entry}");
+    assert_exit_reason_names(&output, "error-severity-findings (3 at or above error)");
+}
+
+#[test]
+fn a_quiet_json_dupes_run_under_fail_on_issues_names_the_failed_gate() {
+    let project = cloned_project();
+    let output = run(&[
+        "dupes",
+        "--root",
+        root_arg(&project),
+        "--format",
+        "json",
+        "--quiet",
+        "--fail-on-issues",
+    ]);
+    assert_eq!(output.code, 1, "{}", output.stderr);
+    assert_exit_reason_names(&output, "duplication-findings");
+}
+
+/// The threshold gate prints its own line in every mode, so the exit reason
+/// does not repeat it.
+#[test]
+fn a_dupes_threshold_failure_is_stated_once() {
+    let project = cloned_project();
+    let output = run(&[
+        "dupes",
+        "--root",
+        root_arg(&project),
+        "--format",
+        "json",
+        "--quiet",
+        "--threshold",
+        "1",
+    ]);
+    assert_eq!(output.code, 1, "{}", output.stderr);
+    assert!(
+        output.stderr.contains("exceeds threshold"),
+        "{}",
+        output.stderr
+    );
+    assert_no_exit_reason(&output);
+}
+
+/// The dead-code section of a bare human run prints the regression outcome.
+/// The run does not print it a second time.
+#[test]
+fn a_human_combined_run_states_the_regression_outcome_once() {
+    let (project, baseline) = regressed_orphan_project();
+    let output = run(&[
+        "--root",
+        root_arg(&project),
+        "--only",
+        "dead-code",
+        "--fail-on-regression",
+        "--tolerance",
+        "0",
+        "--regression-baseline",
+        baseline.to_str().expect("utf8"),
+    ]);
+    assert_eq!(output.code, 1, "{}", output.stderr);
+    assert_eq!(
+        output.stderr.matches("Regression detected").count(),
+        1,
+        "{}",
+        output.stderr
     );
 }

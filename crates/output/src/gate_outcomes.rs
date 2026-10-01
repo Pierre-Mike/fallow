@@ -50,9 +50,11 @@ use serde::Serialize;
 #[serde(rename_all = "kebab-case")]
 pub enum GateName {
     /// The CLI's own severity rule: any finding whose effective severity is
-    /// `error` fails the run. This is NOT a count rule, and `--fail-on-issues`
-    /// only promotes warn-tier rules into it, so a project with a rule set to
-    /// `warn` can report findings and still exit 0.
+    /// `error` fails the run. This is NOT a count threshold, and
+    /// `--fail-on-issues` only promotes warn-tier rules into it, so a project
+    /// with a rule set to `warn` can report findings and still exit 0.
+    /// `observed` is the number of findings at `error` severity and
+    /// `threshold_label` is `error`.
     ErrorSeverityFindings,
     /// `--fail-on-regression`: issue counts grew past `--tolerance` compared
     /// with the regression baseline.
@@ -75,9 +77,11 @@ pub enum GateName {
     /// `--min-severity`: at least one complexity finding reached the configured
     /// severity. One branch of the findings gate; see [`Self::HealthFindings`].
     HealthMinSeverity,
-    /// The health findings gate with no severity floor: any complexity finding
-    /// fails the run. Inert when `--min-score` is set alone, which is what
-    /// "complexity findings become informational" means.
+    /// The health findings gate with no severity floor: a complexity finding
+    /// whose `complexity-*` rule is `error` fails the run. `observed` is the
+    /// number of these findings and `threshold_label` is `error`. Inert when
+    /// `--min-score` is set alone, which is what "complexity findings become
+    /// informational" means.
     HealthFindings,
     /// The coverage-gap gate, configured through `rules.coverage-gaps`.
     HealthCoverageGaps,
@@ -208,7 +212,9 @@ pub struct GateOutcome {
     pub enforced: bool,
     /// The measured value the gate compared, when there is one: the duplication
     /// percentage, the health score, the number of findings at or above the
-    /// severity floor, or the number of files in `files`. Whole numbers are
+    /// severity floor, the number of `error` findings of `health-findings` and
+    /// of `error-severity-findings`, or
+    /// the number of files in `files`. Whole numbers are
     /// carried as JSON numbers, so a count of three reads as `3.0`. Absent for
     /// gates that compare no number.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -219,7 +225,9 @@ pub struct GateOutcome {
     pub threshold: Option<f64>,
     /// How the limit was spelled, for a gate whose `threshold` number does not
     /// carry its own unit. `health-min-severity` sets it to the severity floor
-    /// (`moderate`, `high` or `critical`); `regression` sets it to the
+    /// (`moderate`, `high` or `critical`); `health-findings` and
+    /// `error-severity-findings` set it to `error`, the rule severity they
+    /// count; `regression` sets it to the
     /// tolerance as the user wrote it (`"50%"` or `"5"`), because `threshold`
     /// there is the allowance in issues and the percentage would otherwise be
     /// unrecoverable on the grouped envelope, which carries no `regression`

@@ -780,6 +780,7 @@ fn print_check_section(
             type_aware_scope: Some("dead-code"),
             json_style: crate::json_style::JsonStyle::Compact,
             fail_on_parse_error: false,
+            exit_reason: false,
         },
     );
     exit_code_to_u8(code)
@@ -831,6 +832,8 @@ fn print_health_section(
             explain: opts.explain,
             gates: fallow_engine::health::HealthGateOptions {
                 fail_on_stale_baseline: opts.fail_on_stale_baseline,
+                // The analysis already promoted `warn` findings, so the print
+                // has no use for the flag.
                 ..fallow_engine::health::HealthGateOptions::default()
             },
             baseline_path: opts.health_baseline,
@@ -841,24 +844,114 @@ fn print_health_section(
             skip_score_and_trend: true,
             css_requested: false,
             json_style: opts.json_style,
+            exit_reason: false,
         },
     );
     exit_code_to_u8(code)
 }
 
+/// Print one exit-reason line for the whole bare run, after every gate of the
+/// run has set `code`.
+///
+/// The sections print no line of their own, so a run with a failed dead-code
+/// section and a failed health section gets one line that names both gates,
+/// in every output format.
+pub(super) fn print_combined_exit_reason(
+    opts: &CombinedOptions<'_>,
+    check_result: Option<&CheckResult>,
+    dupes_result: Option<&DupesResult>,
+    health_result: Option<&HealthResult>,
+    code: u8,
+) {
+    if code == 0 {
+        return;
+    }
+    let machine = combined_machine_format(opts.output);
+    let mut gates = combined_gate_outcomes(
+        check_result,
+        dupes_result,
+        health_result,
+        CombinedGateFlags {
+            fail_on_stale_baseline: opts.fail_on_stale_baseline,
+            fail_on_issues: opts.fail_on_issues,
+        },
+    );
+    if !machine && let Some(gates) = gates.as_mut() {
+        enforce_human_section_rules(gates);
+    }
+    let own_lines = combined_own_lines(machine, opts.quiet, check_result);
+    crate::gates::print_exit_reason(&crate::gates::ExitReason {
+        gates: gates.as_ref(),
+        code,
+        fail_on_issues: opts.fail_on_issues,
+        quiet: opts.quiet,
+        output: opts.output,
+        own_lines: &own_lines,
+    });
+}
+
+/// The section prints of the human path fail the run on the findings rules
+/// and on the duplication threshold also without `--fail-on-issues`. The
+/// envelope of the machine path keeps `enforced: false` for them, so the
+/// exit-reason line of the human path marks them enforced here.
+fn enforce_human_section_rules(gates: &mut fallow_output::GateOutcomes) {
+    use fallow_output::GateName;
+    for name in [
+        GateName::ErrorSeverityFindings,
+        GateName::HealthFindings,
+        GateName::DuplicationThreshold,
+    ] {
+        if let Some(outcome) = gates.get(name).cloned() {
+            gates.insert(
+                name,
+                fallow_output::GateOutcome {
+                    enforced: true,
+                    ..outcome
+                },
+            );
+        }
+    }
+}
+
+/// The gates of a bare run that already printed their own failure line.
+///
+/// The regression outcome prints when the run is not quiet. On the human path,
+/// the dupes section prints the threshold line in every mode, and the
+/// dead-code section prints the type-aware completeness line when the run is
+/// not quiet.
+fn combined_own_lines(
+    machine: bool,
+    quiet: bool,
+    check_result: Option<&CheckResult>,
+) -> Vec<fallow_output::GateName> {
+    use fallow_output::GateName;
+    let mut own = Vec::new();
+    if !quiet {
+        own.push(GateName::Regression);
+    }
+    if !machine {
+        own.push(GateName::DuplicationThreshold);
+        if !quiet && check_result.is_some_and(crate::check::type_aware_completeness_incomplete) {
+            own.push(GateName::TypeAwareRequire);
+        }
+    }
+    own
+}
+
 /// Handle regression outcome and print failure summary.
 pub(super) fn handle_regression_and_summary(
     max_exit: &mut u8,
-    quiet: bool,
-    root: &std::path::Path,
+    opts: &CombinedOptions<'_>,
     check_result: Option<&CheckResult>,
     dupes_result: Option<&DupesResult>,
     health_result: Option<&HealthResult>,
 ) {
+    let quiet = opts.quiet;
     if let Some(result) = check_result
         && let Some(ref outcome) = result.regression
     {
-        if !quiet {
+        // The dead-code section of the human path already printed the outcome.
+        if !quiet && combined_machine_format(opts.output) {
             regression::print_regression_outcome(outcome);
         }
         *max_exit = (*max_exit).max(crate::exit_codes::gate_failed_exit_code(
@@ -868,7 +961,7 @@ pub(super) fn handle_regression_and_summary(
     }
 
     if *max_exit > 0 && !quiet {
-        print_failure_summary(root, check_result, dupes_result, health_result);
+        print_failure_summary(opts.root, check_result, dupes_result, health_result);
     }
 }
 
@@ -1162,25 +1255,34 @@ fn emit_combined_json_output(
 /// The combined run's type-aware completeness rule, shared by the exit path and
 /// the `gate_outcomes` entry.
 ///
-/// Deliberately not [`crate::report::ci::required_type_aware_incomplete`], which
-/// the standalone commands use: that one keys on `meta.required_completeness`
-/// and also fails on a degraded query, while combined mode keys on the resolved
-/// config and only on `identity.completeness`. Two rules under one gate name
-/// was the drift this object exists to remove, so combined mode gets one
-/// function and both of its callers read it.
+/// The gate fails when one of these rules fails:
 ///
-/// The meta is selected `check` first and `health` second on both sides, so a
-/// combined run whose check section is absent cannot enforce a gate it
-/// publishes nothing for.
+/// - The combined rule. It keys on the resolved config and on
+///   `identity.completeness`. The meta is selected `check` first and `health`
+///   second.
+/// - The rule of the dead-code section print,
+///   [`crate::check::type_aware_completeness_incomplete`].
+/// - The rule of the health section print,
+///   [`crate::health::type_aware_completeness_incomplete`].
+///
+/// The human path prints each section, and each section print applies its own
+/// rule to the exit code. The gate reads the same rules, so a section that
+/// exits 1 on type-aware completeness always gives a failed gate entry, and
+/// the exit-reason line names the gate.
 pub fn combined_type_aware_gate_failed(
     check_result: Option<&CheckResult>,
     health_result: Option<&crate::health::HealthResult>,
 ) -> bool {
-    let require_complete = check_result
-        .map(|result| result.config.type_aware.require)
-        .or_else(|| health_result.map(|result| result.config.type_aware.require))
-        == Some(fallow_config::TypeAwareRequire::Complete);
-    require_complete
+    combined_identity_incomplete(check_result, health_result)
+        || check_result.is_some_and(crate::check::type_aware_completeness_incomplete)
+        || health_result.is_some_and(crate::health::type_aware_completeness_incomplete)
+}
+
+fn combined_identity_incomplete(
+    check_result: Option<&CheckResult>,
+    health_result: Option<&crate::health::HealthResult>,
+) -> bool {
+    combined_type_aware_requested(check_result, health_result)
         && check_result
             .and_then(|result| result.type_aware_meta.as_ref())
             .or_else(|| health_result.and_then(|result| result.type_aware_meta.as_ref()))
@@ -1235,21 +1337,20 @@ fn combined_gate_outcomes(
             health_result.and_then(|result| result.report.summary.baseline_staleness),
         ],
         fail_on_stale_baseline: flags.fail_on_stale_baseline,
-        type_aware_failed: combined_type_aware_requested(check_result, health_result)
-            .then(|| combined_type_aware_gate_failed(check_result, health_result)),
+        type_aware_failed: combined_type_aware_gate_outcome(check_result, health_result),
         duplication: dupes_result
             .map(|result| (result.threshold, result.report.stats.duplication_percentage)),
         clone_groups: dupes_result.map(|result| result.report.stats.clone_groups),
-        has_error_severity: check_result.map(|result| {
-            crate::check::rules::has_error_severity_issues(
+        error_findings: check_result.map(|result| {
+            crate::check::rules::count_error_severity_issues(
                 &result.results,
                 &crate::check::effective_check_rules(result),
                 Some(&result.config),
                 result.fail_on_issues,
             )
         }),
-        health_has_findings: health_result
-            .map(|result| result.report.findings.iter().any(|f| f.blocks())),
+        health_blocking_findings: health_result
+            .map(|result| result.report.findings.iter().filter(|f| f.blocks()).count()),
         parse_error: combined_parse_error_outcome(check_result, health_result),
         fail_on_issues: flags.fail_on_issues,
     })
@@ -1271,6 +1372,17 @@ pub fn combined_parse_error_outcome(
         )
         .collect();
     crate::gates::sections_parse_error_outcome(&sections)
+}
+
+/// The verdict of the type-aware completeness gate, `None` when the run did
+/// not arm the gate. A section print that fails the gate also arms it, so the
+/// run never exits 1 on a gate it does not publish.
+fn combined_type_aware_gate_outcome(
+    check_result: Option<&CheckResult>,
+    health_result: Option<&HealthResult>,
+) -> Option<bool> {
+    let failed = combined_type_aware_gate_failed(check_result, health_result);
+    (failed || combined_type_aware_requested(check_result, health_result)).then_some(failed)
 }
 
 /// Whether the combined run asked for the type-aware completeness gate at all,
@@ -1540,6 +1652,98 @@ mod tests {
 
         assert!(dupes.is_none());
         assert!(health.is_none());
+    }
+
+    /// A health result whose type-aware metadata asks for the `complete`
+    /// policy and holds a partial query. The resolved config keeps the
+    /// default `best-effort` policy, so the two sources disagree.
+    fn health_result_with_incomplete_type_aware_meta() -> crate::health::HealthResult {
+        crate::health::HealthResult {
+            branching_by_file: fallow_engine::health::BranchingByFile::default(),
+            report: fallow_output::HealthReport::default(),
+            grouping: None,
+            group_resolver: None,
+            config: fallow_config::FallowConfig::default().resolve(
+                std::path::PathBuf::from("/project"),
+                fallow_config::OutputFormat::Json,
+                1,
+                true,
+                true,
+                None,
+            ),
+            workspace_diagnostics: Vec::new(),
+            elapsed: std::time::Duration::default(),
+            timings: None,
+            type_aware_meta: Some(fallow_types::envelope::TypeAwareMeta {
+                required_completeness: Some(
+                    fallow_types::semantic::SemanticCompletenessRequirement::Complete,
+                ),
+                queries: vec![fallow_types::semantic::SemanticQuerySummary {
+                    query_id: 0,
+                    capability: fallow_types::semantic::SemanticCapability::TypeCoupling,
+                    assertion: "type coupling".to_string(),
+                    status: fallow_types::semantic::SemanticCompleteness::Partial,
+                    reason_code: None,
+                    total_evidence_count: 0,
+                    truncated: false,
+                    omissions: Vec::new(),
+                    actions: Vec::new(),
+                }],
+                ..Default::default()
+            }),
+            coverage_gaps_has_findings: false,
+            should_fail_on_coverage_gaps: false,
+            changed_files_analyzed: None,
+        }
+    }
+
+    /// The health section of the bare run applies the type-aware gate, and
+    /// the run publishes a `type-aware-require` entry. When the section exits
+    /// 1 on that gate, the entry fails too and the exit-reason line names it.
+    #[test]
+    fn the_type_aware_gate_entry_agrees_with_the_health_section_exit() {
+        let health = health_result_with_incomplete_type_aware_meta();
+        let section_code = crate::health::print_health_result(
+            &health,
+            crate::health::HealthPrintOptions {
+                quiet: true,
+                explain: false,
+                gates: fallow_engine::health::HealthGateOptions::default(),
+                baseline_path: None,
+                summary: false,
+                summary_heading: true,
+                show_explain_tip: false,
+                type_aware_scope: Some("health"),
+                skip_score_and_trend: true,
+                css_requested: false,
+                json_style: crate::json_style::JsonStyle::Compact,
+                exit_reason: false,
+            },
+        );
+        assert_eq!(section_code, ExitCode::from(1));
+
+        assert!(super::combined_type_aware_gate_failed(None, Some(&health)));
+        let gates = super::combined_gate_outcomes(
+            None,
+            None,
+            Some(&health),
+            super::CombinedGateFlags {
+                fail_on_stale_baseline: false,
+                fail_on_issues: false,
+            },
+        );
+        let entry = gates
+            .as_ref()
+            .and_then(|gates| gates.get(fallow_output::GateName::TypeAwareRequire))
+            .expect("the run publishes the type-aware gate entry");
+        assert_eq!(entry.status, fallow_output::GateStatus::Fail);
+        let line =
+            crate::report::gate_outcome_text::exit_reason_line(gates.as_ref(), 1, false, &[]);
+        assert!(
+            line.as_deref()
+                .is_some_and(|line| line.contains("type-aware-require")),
+            "{line:?}"
+        );
     }
 
     #[test]

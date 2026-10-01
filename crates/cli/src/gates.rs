@@ -278,15 +278,78 @@ pub fn print_parse_error_gate_failure(files: &[GateFile]) {
 /// It is the default exit rule, so it is in every `dead-code` and `check`
 /// object. Without it, a run gated only on `--fail-on-regression` could exit 1
 /// for an error-severity finding while every entry reported a pass.
-pub const fn error_severity_outcome(has_error_severity: bool, enforced: bool) -> GateOutcome {
-    GateOutcome::new(status_of(has_error_severity), enforced)
+///
+/// `observed` is `error_findings`, the number of findings at `error`
+/// severity, and `threshold_label` is `error`.
+pub fn error_severity_outcome(error_findings: usize, enforced: bool) -> GateOutcome {
+    error_count_outcome(error_findings, enforced)
+}
+
+/// A gate that fails on any finding at `error` severity, with the number of
+/// these findings as `observed`.
+fn error_count_outcome(error_findings: usize, enforced: bool) -> GateOutcome {
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "a finding count never approaches the f64 integer limit"
+    )]
+    let observed = error_findings as f64;
+    GateOutcome::counted(status_of(error_findings > 0), enforced, observed, "error")
 }
 
 /// The default exit rule of `health`: a complexity finding whose
 /// `complexity-*` rule is `error` fails the run.
 /// Also the verdict of the health section of the combined run.
-pub const fn health_findings_outcome(has_findings: bool, enforced: bool) -> GateOutcome {
-    GateOutcome::new(status_of(has_findings), enforced)
+///
+/// `observed` is the number of findings at `error` severity, so a reader of
+/// the envelope sees how many findings fail the run.
+pub fn health_findings_outcome(blocking: usize, enforced: bool) -> GateOutcome {
+    error_count_outcome(blocking, enforced)
+}
+
+/// What [`print_exit_reason`] needs to state why a run exits non-zero.
+pub struct ExitReason<'a> {
+    /// The gates the run evaluated.
+    pub gates: Option<&'a GateOutcomes>,
+    /// The exit code of the run.
+    pub code: u8,
+    /// `--fail-on-issues` or `--ci`: the hint then names the flag.
+    pub fail_on_issues: bool,
+    /// `--quiet`.
+    pub quiet: bool,
+    /// The output format.
+    pub output: fallow_config::OutputFormat,
+    /// The gates that already printed their own failure line in this run. The
+    /// exit-reason line does not repeat them.
+    pub own_lines: &'a [GateName],
+}
+
+/// The gates of a dead-code or check print that state their failure on their
+/// own line when the run is not quiet: the regression outcome and the
+/// type-aware completeness warning.
+pub const LOUD_CHECK_GATES: [GateName; 2] = [GateName::Regression, GateName::TypeAwareRequire];
+
+/// Print the line that names the gates behind a non-zero exit code.
+///
+/// Printed under `--quiet` and for every format except the human report, like
+/// the parse-error and stale-baseline lines: `--ci` implies `--quiet`, and the
+/// machine formats have no place for the verdict. A human report without
+/// `--quiet` already shows the findings and the score, so it gets no line. The
+/// line goes to stderr, so the machine output on stdout stays unchanged.
+pub fn print_exit_reason(reason: &ExitReason<'_>) {
+    if !reason.quiet && matches!(reason.output, fallow_config::OutputFormat::Human) {
+        return;
+    }
+    if let Some(line) = crate::report::gate_outcome_text::exit_reason_line(
+        reason.gates,
+        reason.code,
+        reason.fail_on_issues,
+        reason.own_lines,
+    ) {
+        eprintln!(
+            "{}",
+            crate::report::human_status_line(crate::report::HumanStatus::Failure, line)
+        );
+    }
 }
 
 /// The duplication threshold gate, `None` when no threshold was configured.
@@ -335,7 +398,8 @@ pub fn duplication_findings_outcome(
 
 /// Collect the gates a dead-code or check run evaluated.
 pub struct CheckGateInputs<'a> {
-    pub has_error_severity: bool,
+    /// The number of findings at `error` severity.
+    pub error_findings: usize,
     pub regression: Option<&'a crate::regression::RegressionOutcome>,
     pub baseline_staleness: Option<&'a fallow_output::BaselineStaleness>,
     pub fail_on_stale_baseline: bool,
@@ -368,7 +432,7 @@ pub fn check_gate_outcomes(input: &CheckGateInputs<'_>) -> Option<GateOutcomes> 
     gates.insert_if(GateName::ParseError, input.parse_error.clone());
     gates.insert(
         GateName::ErrorSeverityFindings,
-        error_severity_outcome(input.has_error_severity, true),
+        error_severity_outcome(input.error_findings, true),
     );
     gates.into_option()
 }
@@ -429,9 +493,9 @@ pub struct HealthGateInputs<'a> {
     pub baseline_staleness: Option<&'a fallow_output::BaselineStaleness>,
     /// `--fail-on-stale-baseline`.
     pub fail_on_stale_baseline: bool,
-    /// Whether the run has a complexity finding whose `complexity-*` rule is
+    /// The number of complexity findings whose `complexity-*` rule is
     /// `error`.
-    pub has_findings: bool,
+    pub blocking_findings: usize,
     /// The metadata of the type-aware coupling pass, when it ran.
     pub type_aware_meta: Option<&'a fallow_types::envelope::TypeAwareMeta>,
     /// The `parse-error` gate, when it is armed, built with `enforced: true`.
@@ -532,7 +596,7 @@ pub fn health_gate_outcomes(input: &HealthGateInputs<'_>) -> Option<GateOutcomes
                 // findings become informational.
                 GateOutcome::new(GateStatus::Skipped, false)
             } else {
-                health_findings_outcome(input.has_findings, enforced)
+                health_findings_outcome(input.blocking_findings, enforced)
             },
         );
     }
@@ -634,12 +698,12 @@ pub struct CombinedGateInputs<'a> {
     pub duplication: Option<(f64, f64)>,
     /// The number of clone groups the dupes section reports, when it ran.
     pub clone_groups: Option<usize>,
-    /// Whether the dead-code section holds an error-severity finding, when it
-    /// ran.
-    pub has_error_severity: Option<bool>,
-    /// Whether the health section holds a finding whose `complexity-*` rule
-    /// is `error`, when it ran.
-    pub health_has_findings: Option<bool>,
+    /// The number of findings at `error` severity in the dead-code section,
+    /// when it ran.
+    pub error_findings: Option<usize>,
+    /// The number of findings in the health section whose `complexity-*`
+    /// rule is `error`, when it ran.
+    pub health_blocking_findings: Option<usize>,
     /// The `parse-error` gate, when it is armed. The combined run applies it
     /// in every output format, so it keeps `enforced: true`.
     pub parse_error: Option<GateOutcome>,
@@ -720,16 +784,16 @@ pub fn combined_gate_outcomes(input: &CombinedGateInputs<'_>) -> Option<GateOutc
             duplication_findings_outcome(clone_groups, input.fail_on_issues),
         );
     }
-    if let Some(has_error_severity) = input.has_error_severity {
+    if let Some(error_findings) = input.error_findings {
         gates.insert(
             GateName::ErrorSeverityFindings,
-            error_severity_outcome(has_error_severity, input.fail_on_issues),
+            error_severity_outcome(error_findings, input.fail_on_issues),
         );
     }
-    if let Some(has_findings) = input.health_has_findings {
+    if let Some(blocking) = input.health_blocking_findings {
         gates.insert(
             GateName::HealthFindings,
-            health_findings_outcome(has_findings, input.fail_on_issues),
+            health_findings_outcome(blocking, input.fail_on_issues),
         );
     }
     gates.into_option()
@@ -763,7 +827,7 @@ mod tests {
     #[test]
     fn a_run_that_arms_nothing_still_states_the_default_rule() {
         let gates = check_gate_outcomes(&CheckGateInputs {
-            has_error_severity: true,
+            error_findings: 1,
             regression: None,
             baseline_staleness: None,
             fail_on_stale_baseline: false,
@@ -784,7 +848,7 @@ mod tests {
     #[test]
     fn the_object_always_carries_the_rule_that_decides_the_exit_code() {
         let gates = check_gate_outcomes(&CheckGateInputs {
-            has_error_severity: true,
+            error_findings: 1,
             regression: Some(&crate::regression::RegressionOutcome::Pass {
                 baseline_total: 1,
                 current_total: 1,
@@ -1000,7 +1064,7 @@ mod tests {
             runtime_coverage: None,
             baseline_staleness: None,
             fail_on_stale_baseline: false,
-            has_findings: false,
+            blocking_findings: 0,
             type_aware_meta: None,
             parse_error: parse_error_outcome(true, true, &files),
         })
@@ -1026,7 +1090,7 @@ mod tests {
             runtime_coverage: None,
             baseline_staleness: None,
             fail_on_stale_baseline: false,
-            has_findings: false,
+            blocking_findings: 0,
             type_aware_meta: Some(&partial),
             parse_error: None,
         })
@@ -1047,8 +1111,8 @@ mod tests {
             type_aware_failed: None,
             duplication: Some((1.0, 40.0)),
             clone_groups: Some(3),
-            has_error_severity: Some(true),
-            health_has_findings: Some(true),
+            error_findings: Some(1),
+            health_blocking_findings: Some(1),
             parse_error: None,
             fail_on_issues,
         }
@@ -1081,8 +1145,8 @@ mod tests {
         let gates = combined_gate_outcomes(&CombinedGateInputs {
             duplication: Some((50.0, 10.0)),
             clone_groups: Some(0),
-            has_error_severity: Some(false),
-            health_has_findings: Some(false),
+            error_findings: Some(0),
+            health_blocking_findings: Some(0),
             ..combined_inputs(true)
         })
         .expect("the combined run states its default rules");

@@ -469,7 +469,7 @@ pub fn run_health(
         fail_on_parse_error: result.config.fail_on_parse_error,
         ..opts.gates
     };
-    let code = print_health_result(
+    print_health_result(
         &result,
         HealthPrintOptions {
             quiet: opts.quiet,
@@ -483,17 +483,9 @@ pub fn run_health(
             skip_score_and_trend: false,
             css_requested: opts.css,
             json_style,
+            exit_reason: true,
         },
-    );
-    if code != ExitCode::SUCCESS {
-        return code;
-    }
-    // The envelope states this gate through `type-aware-require`, which reads
-    // the same predicate.
-    ExitCode::from(crate::exit_codes::gate_failed_exit_code(
-        fallow_output::GateName::TypeAwareRequire,
-        crate::report::ci::required_type_aware_incomplete(result.type_aware_meta.as_ref()),
-    ))
+    )
 }
 
 pub struct ResolvedTypeAwareHealthOptions {
@@ -596,6 +588,10 @@ pub struct HealthPrintOptions<'a> {
     /// silently omitted. Defaults `false` for callers that do not request CSS.
     pub css_requested: bool,
     pub json_style: crate::json_style::JsonStyle,
+    /// Print the stderr line that names the gates behind a non-zero exit. False
+    /// when the caller owns the exit code, as `audit` does, or prints one line
+    /// for all its sections, as the bare run does.
+    pub exit_reason: bool,
 }
 
 pub fn print_health_result(result: &HealthResult, options: HealthPrintOptions<'_>) -> ExitCode {
@@ -611,16 +607,39 @@ pub fn print_health_result(result: &HealthResult, options: HealthPrintOptions<'_
         return report_code;
     }
 
-    if options.gates.report_only {
+    // `--report-only` keeps every gate advisory except type-aware completeness,
+    // which the envelope always states as enforced.
+    let type_aware_code = crate::exit_codes::gate_failed_exit_code(
+        fallow_output::GateName::TypeAwareRequire,
+        type_aware_completeness_incomplete(result),
+    );
+    let code = if options.gates.report_only {
         note_stale_baseline_gate_stood_down(result, options);
-        return ExitCode::SUCCESS;
-    }
-
-    let code = health_exit_code(result, options);
+        type_aware_code
+    } else {
+        health_exit_code(result, options).max(type_aware_code)
+    };
     if code == 0 {
-        maybe_print_score_gate_note(result, options);
+        if !options.gates.report_only {
+            maybe_print_score_gate_note(result, options);
+        }
+    } else if options.exit_reason {
+        crate::gates::print_exit_reason(&crate::gates::ExitReason {
+            gates: health_gate_outcomes(result, options).as_ref(),
+            code,
+            fail_on_issues: options.gates.fail_on_issues,
+            quiet: options.quiet,
+            output: result.config.output,
+            own_lines: &[],
+        });
     }
     crate::exit_codes::run_exit_code([code])
+}
+
+/// Whether the type-aware completeness gate of this health result fails.
+/// The health print and the gate of the bare run both read this rule.
+pub fn type_aware_completeness_incomplete(result: &HealthResult) -> bool {
+    crate::report::ci::required_type_aware_incomplete(result.type_aware_meta.as_ref())
 }
 
 fn health_report_context<'a>(
@@ -687,7 +706,7 @@ fn health_gate_outcomes(
             .then(|| has_failing_runtime_coverage(result)),
         baseline_staleness: result.report.summary.baseline_staleness.as_ref(),
         fail_on_stale_baseline: options.gates.fail_on_stale_baseline,
-        has_findings: blocking_findings(result).next().is_some(),
+        blocking_findings: blocking_findings(result).count(),
         type_aware_meta: result.type_aware_meta.as_ref(),
         parse_error: health_parse_error_outcome(result, options),
     })
@@ -712,9 +731,10 @@ fn health_parse_error_outcome(
 /// line.
 ///
 /// The baseline gate is why this is not a short-circuiting chain: the score and
-/// findings gates have their condition printed in the report, a stale baseline
-/// has it nowhere, so a run that already fails the findings gate would exit 1
-/// with nothing about the baseline the user explicitly gated on.
+/// findings gates have their condition in the human report and in the
+/// exit-reason line, a stale baseline has it nowhere, so a run that already
+/// fails the findings gate would exit 1 with nothing about the baseline the
+/// user explicitly gated on.
 fn health_exit_code(result: &HealthResult, options: HealthPrintOptions<'_>) -> u8 {
     use crate::exit_codes::gate_failed_exit_code;
     use fallow_output::GateName;
@@ -882,7 +902,9 @@ fn score_gate_failed(result: &HealthResult, options: HealthPrintOptions<'_>) -> 
         return false;
     }
 
-    if !options.quiet {
+    // The exit-reason line states this gate under `--quiet` and in the machine
+    // formats, so this line is for the human report only.
+    if !options.quiet && matches!(result.config.output, fallow_config::OutputFormat::Human) {
         eprintln!(
             "Health score {:.1} ({}) is below minimum threshold {:.0}",
             hs.score, hs.grade, threshold
@@ -1139,6 +1161,7 @@ mod tests {
                 skip_score_and_trend: false,
                 css_requested: false,
                 json_style: crate::json_style::JsonStyle::Compact,
+                exit_reason: true,
             },
         )
     }
@@ -1315,6 +1338,7 @@ mod tests {
                     skip_score_and_trend: false,
                     css_requested: false,
                     json_style: crate::json_style::JsonStyle::Compact,
+                    exit_reason: true,
                 },
             ),
             ExitCode::from(1),
@@ -1343,6 +1367,42 @@ mod tests {
         }
     }
 
+    /// The type-aware completeness gate is part of the health exit path, so
+    /// the exit-reason line names it when it is the only failed gate. It also
+    /// fails a `--report-only` run, which keeps every other gate advisory.
+    #[test]
+    fn a_failed_type_aware_completeness_gate_fails_the_health_print() {
+        let mut result = fx_gate_result(vec![], Some(fx_health_score(100.0, "A")));
+        result.type_aware_meta = Some(incomplete_required_type_aware_meta());
+        assert_eq!(gate_exit(&result, None, None, false), ExitCode::from(1));
+        assert_eq!(gate_exit(&result, None, None, true), ExitCode::from(1));
+
+        let options = HealthPrintOptions {
+            quiet: true,
+            explain: false,
+            gates: HealthGateOptions::default(),
+            baseline_path: None,
+            summary: false,
+            summary_heading: true,
+            show_explain_tip: true,
+            type_aware_scope: None,
+            skip_score_and_trend: false,
+            css_requested: false,
+            json_style: crate::json_style::JsonStyle::Compact,
+            exit_reason: true,
+        };
+        let line = crate::report::gate_outcome_text::exit_reason_line(
+            health_gate_outcomes(&result, options).as_ref(),
+            1,
+            false,
+            &[],
+        );
+        assert_eq!(
+            line.as_deref(),
+            Some("Exit code 1: gate type-aware-require failed.")
+        );
+    }
+
     #[test]
     fn the_envelope_states_a_failed_type_aware_completeness_gate() {
         let mut result = fx_gate_result(vec![], Some(fx_health_score(100.0, "A")));
@@ -1359,6 +1419,7 @@ mod tests {
             skip_score_and_trend: false,
             css_requested: false,
             json_style: crate::json_style::JsonStyle::Compact,
+            exit_reason: true,
         };
         let gates = serde_json::to_value(health_gate_outcomes(&result, options))
             .expect("gate outcomes serialize");
