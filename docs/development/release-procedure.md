@@ -65,7 +65,8 @@ invariants in this file.
 6. Verify the complete `[Unreleased]` changelog against the commit range,
    issues, discussions, and external contributors since the prior tag. Ground
    public names, flags, rule IDs, and contributor handles in source or GitHub,
-   not memory.
+   not memory. Merge each repeated `###` heading into one heading, because a
+   clean merge of several pull requests can leave two `### Fixed` headings.
 7. Draft curated public GitHub release notes before starting the publication
    workflow. They must:
 
@@ -89,9 +90,10 @@ invariants in this file.
 
    - `release.yml` runs it at dispatch against `CHANGELOG.md`, the source the
      notes are drafted from. It requires one dated `## [X.Y.Z]` section with a
-     non-empty body and no em-dash, the matching compare-link definition back
-     to the previous released version, and an empty `[Unreleased]` section so
-     nothing ships uncredited. Publication cannot start without it.
+     non-empty body and no em-dash, no `###` heading more than once in that
+     section, the matching compare-link definition back to the previous
+     released version, and an empty `[Unreleased]` section so nothing ships
+     uncredited. Publication cannot start without it.
    - `release-published.yml` runs it again on the `release: published` event,
      the first moment a title and body exist, against the title prefix, the
      non-empty body, the comparison URL, em-dashes, and third-party names.
@@ -99,6 +101,12 @@ invariants in this file.
      publishes, so it re-checks only the released section, which is frozen.
      The empty-`[Unreleased]` rule is a dispatch-time rule: anything merged
      during the publish would otherwise fail a correct release.
+
+   The gate accepts repeated headings in `[Unreleased]`, because step 6
+   merges them before `[Unreleased]` becomes the new version. The gate checks only the
+   section of the version under release, so sections that shipped with a
+   repeat stay as they are. The error names each repeated heading and its
+   line numbers.
 
    The changelog gate deliberately omits the third-party-name rule: changelog
    entries legitimately name a migration source or a documented parity gap,
