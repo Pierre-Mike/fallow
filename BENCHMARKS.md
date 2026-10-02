@@ -187,9 +187,6 @@ The time covers the full pipeline: discovery, parsing, graph building, and cycle
 
 ## CI Integration
 
-The `.github/workflows/bench.yml` workflow runs Criterion benchmarks on PRs and pushes to main (when Rust source files change):
+The `.github/workflows/bench.yml` workflow runs the Rust benchmarks under CodSpeed on pushes to main and on pull requests with the `ci:perf` label. CodSpeed keeps the history and compares a pull request with its base. The workflow measures only the Rust benchmarks, not the end-to-end benchmarks above.
 
-- Results stored on `gh-pages` branch
-- 10% regression threshold triggers alerts
-- PR comments show benchmark comparisons
-- Only measures the Criterion (Rust) benchmarks, not the end-to-end benchmarks
+`.github/workflows/bench-cli-instructions.yml` runs the release CLI under CodSpeed CPU simulation on pinned public projects. See [docs/benchmarking.md](docs/benchmarking.md) for details.
