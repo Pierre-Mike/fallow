@@ -82,6 +82,57 @@ fn eslint_relative_extends_config_is_not_reported_unused() {
 }
 
 #[test]
+fn extensionless_import_prefers_directory_index_over_non_module_sibling() {
+    for sibling in ["css", "scss", "json", "vue", "graphql"] {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("src/Widget")).expect("src dir");
+        std::fs::write(
+            root.join("package.json"),
+            r#"{ "name": "directory-index-sibling", "private": true }"#,
+        )
+        .expect("package json");
+        std::fs::write(
+            root.join("src/index.ts"),
+            "import { Widget } from './Widget';\nconsole.log(Widget());\n",
+        )
+        .expect("entry");
+        std::fs::write(
+            root.join("src/Widget/index.tsx"),
+            "export function Widget() { return 'widget'; }\n\
+             export function UnusedHelper() { return 'unused'; }\n",
+        )
+        .expect("directory index");
+        std::fs::write(root.join(format!("src/Widget.{sibling}")), "{}\n").expect("sibling");
+
+        let config = create_config(root.to_path_buf());
+        let results = fallow_core::analyze(&config).expect("analysis should succeed");
+
+        let unused_files: Vec<String> = results
+            .unused_files
+            .iter()
+            .map(|file| file.file.path.to_string_lossy().replace('\\', "/"))
+            .collect();
+        assert!(
+            !unused_files
+                .iter()
+                .any(|path| path.ends_with("Widget/index.tsx")),
+            "./Widget must resolve to Widget/index.tsx, not Widget.{sibling}: {unused_files:?}"
+        );
+        let unused_exports: Vec<&str> = results
+            .unused_exports
+            .iter()
+            .map(|e| e.export.export_name.as_str())
+            .collect();
+        assert_eq!(
+            unused_exports,
+            ["UnusedHelper"],
+            "only UnusedHelper is unused with a Widget.{sibling} sibling"
+        );
+    }
+}
+
+#[test]
 fn type_only_bidirectional_import_not_reported_as_cycle() {
     let root = fixture_path("type-only-cycle");
     let config = create_config(root);

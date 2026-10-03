@@ -1818,6 +1818,9 @@ fn resolve_resolved_specifier(
             return ResolveResult::Unresolvable(specifier.to_string());
         }
     }
+    let directory_index =
+        directory_index_shadowed_by_sibling(ctx, from_file, specifier, from_style, resolved_path);
+    let resolved_path = directory_index.as_deref().unwrap_or(resolved_path);
     let result = ResolvedPathContext {
         ctx,
         from_file,
@@ -1826,6 +1829,48 @@ fn resolve_resolved_specifier(
     }
     .resolve(resolved_path);
     credit_workspace_package_target(ctx, from_file, specifier, resolved_path, result)
+}
+
+/// Prefer a directory index over a sibling non-module file of the same name.
+///
+/// The resolver's extension list carries `.css`, `.scss`, `.json`, `.vue` and
+/// other non-JS/TS extensions so that style and SFC imports resolve, and it
+/// tries every extension on the file before it looks inside a directory. An
+/// extensionless `./X` from a script therefore lands on a sibling `X.css`
+/// even when `X/index.tsx` exists. TypeScript and Node never consider those
+/// extensions for an extensionless specifier: they try `X.ts`, `X.tsx` and
+/// the other module extensions, then the `X/index.*` entry. When the resolver
+/// appended a non-JS/TS extension and a directory of the same name resolves to
+/// a JS/TS module, that module is the real target.
+fn directory_index_shadowed_by_sibling(
+    ctx: &ResolveContext<'_>,
+    from_file: &Path,
+    specifier: &str,
+    from_style: bool,
+    resolved_path: &Path,
+) -> Option<PathBuf> {
+    if from_style
+        || is_style_file(from_file)
+        || is_js_ts_extension(resolved_path)
+        || is_node_modules_path(resolved_path)
+    {
+        return None;
+    }
+    let requested_name = specifier.rsplit('/').next()?;
+    let resolved_stem = resolved_path.file_stem()?.to_str()?;
+    if requested_name.is_empty() || resolved_stem != requested_name {
+        return None;
+    }
+    let directory = resolved_path.with_file_name(requested_name);
+    if !directory.is_dir() {
+        return None;
+    }
+    super::work::note_oxc_resolve();
+    let index = ctx
+        .resolver
+        .resolve(directory.parent()?, &format!("./{requested_name}/"))
+        .ok()?;
+    is_js_ts_extension(index.path()).then(|| index.path().to_path_buf())
 }
 
 /// Keep dependency credit for a workspace package import that resolved to the
