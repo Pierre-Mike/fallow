@@ -83,7 +83,9 @@ fn eslint_relative_extends_config_is_not_reported_unused() {
 
 #[test]
 fn extensionless_import_prefers_directory_index_over_non_module_sibling() {
-    for sibling in ["css", "scss", "json", "vue", "graphql"] {
+    for (index, sibling) in ["tsx", "ts", "js", "jsx"].into_iter().flat_map(|index| {
+        ["css", "scss", "json", "vue", "graphql"].map(move |sibling| (index, sibling))
+    }) {
         let dir = tempfile::tempdir().expect("temp dir");
         let root = dir.path();
         std::fs::create_dir_all(root.join("src/Widget")).expect("src dir");
@@ -98,7 +100,7 @@ fn extensionless_import_prefers_directory_index_over_non_module_sibling() {
         )
         .expect("entry");
         std::fs::write(
-            root.join("src/Widget/index.tsx"),
+            root.join(format!("src/Widget/index.{index}")),
             "export function Widget() { return 'widget'; }\n\
              export function UnusedHelper() { return 'unused'; }\n",
         )
@@ -116,8 +118,8 @@ fn extensionless_import_prefers_directory_index_over_non_module_sibling() {
         assert!(
             !unused_files
                 .iter()
-                .any(|path| path.ends_with("Widget/index.tsx")),
-            "./Widget must resolve to Widget/index.tsx, not Widget.{sibling}: {unused_files:?}"
+                .any(|path| path.ends_with(&format!("Widget/index.{index}"))),
+            "./Widget must resolve to Widget/index.{index}, not Widget.{sibling}: {unused_files:?}"
         );
         let unused_exports: Vec<&str> = results
             .unused_exports
@@ -127,7 +129,7 @@ fn extensionless_import_prefers_directory_index_over_non_module_sibling() {
         assert_eq!(
             unused_exports,
             ["UnusedHelper"],
-            "only UnusedHelper is unused with a Widget.{sibling} sibling"
+            "only UnusedHelper is unused in Widget/index.{index} with a Widget.{sibling} sibling"
         );
     }
 }
