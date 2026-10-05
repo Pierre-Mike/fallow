@@ -658,3 +658,44 @@ fn gdp_producer_abstains_on_ambiguous_star_named_namespace_shapes() {
         ["@gdp-ts/core.defineProof(\"BareStarControl\")"]
     );
 }
+
+#[test]
+fn gdp_producer_abstains_on_conflicting_explicit_and_duplicate_local_exports() {
+    let results = analyze_gdp_project(
+        &[
+            (
+                "src/index.ts",
+                "import { defineProof as ambiguous } from './explicit'; import { ns } from './namespace'; import { defineProof } from '@gdp-ts/core'; import { defineProof as identical } from './identical-explicit'; import { ns as sameNs } from './identical-namespace'; ambiguous('ExplicitCollision'); ns.defineProof('NamespaceCollision'); defineProof('PositiveControl'); identical('IdenticalExplicitControl'); sameNs.defineProof('IdenticalNamespaceControl');",
+            ),
+            (
+                "src/explicit.ts",
+                "export { defineProof } from '@gdp-ts/core'; const unrelated = (kind) => kind; export { unrelated as defineProof };",
+            ),
+            (
+                "src/namespace.ts",
+                "import * as importedNs from '@gdp-ts/core'; const unrelated = { defineProof: (kind) => kind }; export { importedNs as ns, unrelated as ns };",
+            ),
+            (
+                "src/identical-explicit.ts",
+                "import { defineProof as imported } from '@gdp-ts/core'; export { defineProof } from '@gdp-ts/core'; export { imported as defineProof };",
+            ),
+            (
+                "src/identical-namespace.ts",
+                "import * as first from '@gdp-ts/core'; import * as second from '@gdp-ts/core'; export { first as ns, second as ns };",
+            ),
+        ],
+        serde_json::json!([{"id":"trusted-producers","kind":"gdp-proof-producer","allowedFiles":["src/trusted/**"]}]),
+    );
+    assert_eq!(
+        results
+            .policy_violations
+            .iter()
+            .map(|finding| finding.violation.matched.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "@gdp-ts/core.defineProof(\"PositiveControl\")",
+            "@gdp-ts/core.defineProof(\"IdenticalExplicitControl\")",
+            "@gdp-ts/core.defineProof(\"IdenticalNamespaceControl\")"
+        ]
+    );
+}

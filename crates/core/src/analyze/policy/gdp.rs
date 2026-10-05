@@ -174,13 +174,13 @@ impl<'a> ProofOrigins<'a> {
         {
             return Origin::Unknown;
         }
-        let mut explicit = Origin::Missing;
-        let mut has_explicit = false;
+        let mut declared = Origin::Missing;
+        let mut has_declared = false;
         for re_export in &module.re_exports {
             if re_export.info.is_type_only || re_export.info.exported_name != *name {
                 continue;
             }
-            has_explicit = true;
+            has_declared = true;
             let imported = if is_whole_module_reexport(&re_export.info) {
                 if member.is_empty() {
                     return Origin::Unknown;
@@ -189,27 +189,30 @@ impl<'a> ProofOrigins<'a> {
             } else {
                 symbol_path(&re_export.info.imported_name, member)
             };
-            explicit = explicit.merge(self.target_origin(
+            declared = declared.merge(self.target_origin(
                 &re_export.info.source,
                 &re_export.target,
                 &imported,
                 depth,
             ));
         }
-        if has_explicit {
-            return explicit;
-        }
-        if let Some(export) = module
+        for export in module
             .exports
             .iter()
-            .find(|export| !export.is_type_only && export.name.matches_str(name))
+            .filter(|export| !export.is_type_only && export.name.matches_str(name))
         {
+            has_declared = true;
             let local = export.local_name.as_deref().unwrap_or(name.as_str());
             // Anonymous default expressions do not name a lexically imported value.
-            if name == "default" && export.local_name.is_none() {
-                return Origin::Local(module.file_id, symbol.to_vec());
-            }
-            return self.local_import_origin(module, local, member, depth);
+            let origin = if name == "default" && export.local_name.is_none() {
+                Origin::Local(module.file_id, symbol.to_vec())
+            } else {
+                self.local_import_origin(module, local, member, depth)
+            };
+            declared = declared.merge(origin);
+        }
+        if has_declared {
+            return declared;
         }
         if name == "default" {
             return Origin::Missing;
