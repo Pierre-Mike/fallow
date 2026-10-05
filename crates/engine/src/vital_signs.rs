@@ -1473,6 +1473,42 @@ mod tests {
     }
 
     #[test]
+    fn hotspot_penalty_ignores_subthreshold_ranked_entries() {
+        let hotspots: Vec<HotspotEntry> = [49.9, 0.1]
+            .into_iter()
+            .enumerate()
+            .map(|(index, score)| HotspotEntry {
+                path: PathBuf::from(format!("src/active-{index}.ts")),
+                score,
+                commits: 3,
+                weighted_commits: 3.0,
+                lines_added: 10,
+                lines_deleted: 5,
+                complexity_density: 0.1,
+                fan_in: 0,
+                trend: crate::churn::ChurnTrend::Stable,
+                ownership: None,
+                is_test_path: false,
+            })
+            .collect();
+        let input = VitalSignsInput {
+            modules: &[],
+            module_filter: None,
+            file_scores: None,
+            hotspots: Some(&hotspots),
+            total_files: 200,
+            analysis_counts: None,
+        };
+
+        let vitals = compute_vital_signs(&input);
+        let health = compute_health_score(&vitals, input.total_files);
+
+        assert_eq!(vitals.hotspot_count, Some(0));
+        assert_eq!(vitals.hotspot_top_pct_count, Some(2));
+        assert_some_close(health.penalties.hotspots, 0.0);
+    }
+
+    #[test]
     fn empty_cyclomatic_population_is_measured_not_unknown() {
         let vs = compute_vital_signs(&VitalSignsInput {
             modules: &[],
