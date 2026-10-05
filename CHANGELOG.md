@@ -82,6 +82,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Health copies only visible hotspots when `--top` limits the list.**
+  Scoring and grouped reports keep the complete hotspot data. The CLI
+  reference also describes grouped Markdown reports, and the editor setting
+  clarifies that refactoring targets use Git history when hotspots are hidden.
+
 - **A command-line tool from the tooling catalogue needs a reference to
   count as used.** Before, a catalogue entry such as `oxlint`, `tsx`,
   `npm-run-all` or `lint-staged` in `devDependencies` was credited by name,

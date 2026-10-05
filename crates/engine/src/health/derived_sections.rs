@@ -242,10 +242,10 @@ fn compute_filtered_hotspots(
         .opts
         .top
         .filter(|&top| top < hotspots.len())
-        .map(|_| hotspots.clone());
-    if let Some(top) = input.opts.top {
-        hotspots.truncate(top);
-    }
+        .map(|top| {
+            let displayed = hotspots[..top].to_vec();
+            std::mem::replace(&mut hotspots, displayed)
+        });
     if let Some(diff_index) = input.diff_index {
         filter_hotspots_by_diff(&mut hotspots, diff_index, &input.config.root);
         if let Some(group_hotspots) = group_hotspots.as_mut() {
