@@ -32,12 +32,32 @@ pub struct TrendPoint {
     /// Letter grade from the snapshot.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub grade: Option<String>,
+    /// Formula used for the stored score; absent on legacy snapshots.
+    /// A score delta is emitted only when this matches the current score formula.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub score_formula_version: Option<u32>,
     /// Coverage model used for CRAP computation in this snapshot.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub coverage_model: Option<CoverageModel>,
     /// Schema version of the compared snapshot.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub snapshot_schema_version: Option<u32>,
+}
+
+/// Explain why scores with unknown or differing formula identities cannot be
+/// compared. Uses identities from the saved report, independent of this binary.
+#[must_use]
+pub fn health_score_comparison_note(
+    previous_formula: Option<u32>,
+    current_formula: Option<u32>,
+) -> Option<&'static str> {
+    let (Some(previous), Some(current)) = (previous_formula, current_formula) else {
+        return Some("Score comparison omitted: score formula version is unknown.");
+    };
+    if previous != current {
+        return Some("Score comparison omitted: score formulas differ.");
+    }
+    None
 }
 
 /// A single metric's trend between two snapshots.

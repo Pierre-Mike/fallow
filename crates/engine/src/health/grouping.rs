@@ -704,7 +704,7 @@ pub(super) fn apply_group_trends(
                 previous,
                 &vitals.vital_signs,
                 &vitals.counts,
-                vitals.health_score.as_ref().map(|score| score.score),
+                vitals.health_score.as_ref(),
             ));
             group.trend_status = Some(GroupTrendStatus::Compared);
         } else {

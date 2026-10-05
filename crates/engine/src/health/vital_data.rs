@@ -232,7 +232,7 @@ pub fn prepare_health_vital_data(
             baseline.snapshots_loaded,
             &vital_signs,
             &counts,
-            health_score.as_ref().map(|s| s.score),
+            health_score.as_ref(),
         )
     });
 

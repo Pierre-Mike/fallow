@@ -3541,6 +3541,7 @@ fn health_report_with_trend(root: &Path) -> HealthReport {
             git_sha: Some("abc1234".into()),
             score: Some(72.0),
             grade: Some("B".into()),
+            score_formula_version: Some(fallow_output::HEALTH_SCORE_FORMULA_VERSION),
             coverage_model: None,
             snapshot_schema_version: None,
         },

@@ -1011,6 +1011,24 @@ fn push_hotspots_compact(
 
 fn push_health_trend_compact(lines: &mut Vec<String>, report: &fallow_output::HealthReport) {
     if let Some(ref trend) = report.health_trend {
+        if let Some(current) = report.health_score.as_ref()
+            && trend.compared_to.score.is_some()
+            && !trend.metrics.iter().any(|metric| metric.name == "score")
+            && fallow_output::health_score_comparison_note(
+                trend.compared_to.score_formula_version,
+                Some(current.formula_version),
+            )
+            .is_some()
+        {
+            let previous_formula = trend
+                .compared_to
+                .score_formula_version
+                .map_or_else(|| "unknown".to_owned(), |version| version.to_string());
+            lines.push(format!(
+                "trend:score-omitted:previous_formula={previous_formula},current_formula={}",
+                current.formula_version,
+            ));
+        }
         lines.push(format!(
             "trend:overall:direction={}",
             trend.overall_direction.label()

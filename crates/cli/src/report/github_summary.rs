@@ -1515,6 +1515,26 @@ fn health_score_header(score_env: &Value) -> String {
                 signed(f_or_zero(cx_delta, "delta")),
             );
         }
+    } else if let Some(compared) = score_env
+        .get("health_trend")
+        .and_then(|trend| trend.get("compared_to"))
+    {
+        let previous_formula = compared
+            .get("score_formula_version")
+            .and_then(Value::as_u64)
+            .and_then(|version| u32::try_from(version).ok());
+        let current_formula = score
+            .get("formula_version")
+            .and_then(Value::as_u64)
+            .and_then(|version| u32::try_from(version).ok());
+        let note = compared
+            .get("score")
+            .and_then(Value::as_f64)
+            .and_then(|_| {
+                fallow_output::health_score_comparison_note(previous_formula, current_formula)
+            })
+            .unwrap_or("Score comparison unavailable for this snapshot.");
+        let _ = write!(header, "\n> _{note}_");
     } else {
         header.push_str("\n> _Enable `save-snapshot: true` to track score trends over time._");
     }

@@ -506,7 +506,7 @@ fn health_complexity_metrics() -> [(String, MetaMetric); 11] {
     ]
 }
 
-fn health_churn_and_target_metrics() -> [(String, MetaMetric); 8] {
+fn health_churn_and_target_metrics() -> [(String, MetaMetric); 10] {
     [
         health_metric(
             "score",
@@ -563,6 +563,20 @@ fn health_churn_and_target_metrics() -> [(String, MetaMetric); 8] {
             "Project-level aggregate score computed from vital signs and issue signals.",
             Some("[0, 100]"),
             "higher is better; missing metrics are not penalized",
+        ),
+        health_metric(
+            "health_score.formula_version",
+            "Health Score Formula Version",
+            "Version of the health-scoring rubric used to produce the current score.",
+            Some("[1, infinity)"),
+            "compare score values only when both formula versions are known and equal",
+        ),
+        health_metric(
+            "health_trend.compared_to.score_formula_version",
+            "Baseline Health Score Formula Version",
+            "Formula version saved with the historical score; absent on legacy or unscored snapshots.",
+            Some("[1, infinity)"),
+            "the score delta is omitted when formula versions are unknown or different; available raw metric trends remain comparable",
         ),
     ]
 }
@@ -811,6 +825,11 @@ mod tests {
         assert!(meta.field_definitions.contains_key("actions[]"));
         assert!(meta.metrics.contains_key("cyclomatic"));
         assert!(meta.metrics.contains_key("health_score"));
+        assert!(meta.metrics.contains_key("health_score.formula_version"));
+        assert!(
+            meta.metrics
+                .contains_key("health_trend.compared_to.score_formula_version")
+        );
         assert!(meta.metrics.contains_key("max_render_fan_in"));
         assert!(meta.metrics.contains_key("percent_dead_in_production"));
         assert!(meta.metrics.contains_key("styling_health.score"));

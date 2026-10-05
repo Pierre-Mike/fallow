@@ -1385,12 +1385,22 @@ fn push_trend_header_line(lines: &mut Vec<String>, trend: &fallow_output::Health
     ));
 }
 
-/// Renders the optional CRAP-model-change and snapshot-schema-version notes.
+/// Renders score-formula, CRAP-model and snapshot-schema compatibility notes.
 fn push_trend_model_notes(
     lines: &mut Vec<String>,
     trend: &fallow_output::HealthTrend,
     report: &fallow_output::HealthReport,
 ) {
+    if let Some(current) = report.health_score.as_ref()
+        && trend.compared_to.score.is_some()
+        && !trend.metrics.iter().any(|metric| metric.name == "score")
+        && let Some(note) = fallow_output::health_score_comparison_note(
+            trend.compared_to.score_formula_version,
+            Some(current.formula_version),
+        )
+    {
+        lines.push(format!("  {}", note.yellow()));
+    }
     if let (Some(prev_model), Some(cur_model)) = (
         &trend.compared_to.coverage_model,
         &report.summary.coverage_model,
@@ -1415,8 +1425,7 @@ fn push_trend_model_notes(
         lines.push(format!(
             "  {}",
             format!(
-                "note: compared snapshot uses schema v{prev_version}, this run writes v{}; score comparison still valid",
-                fallow_output::SNAPSHOT_SCHEMA_VERSION
+                "note: compared snapshot uses schema v{prev_version}; available raw metrics remain comparable"
             )
             .yellow()
         ));
@@ -4535,6 +4544,7 @@ mod tests {
                 git_sha: Some("abc1234".into()),
                 score: Some(72.0),
                 grade: Some("B".into()),
+                score_formula_version: Some(fallow_output::HEALTH_SCORE_FORMULA_VERSION),
                 coverage_model: None,
                 snapshot_schema_version: None,
             },
@@ -4587,6 +4597,7 @@ mod tests {
                 git_sha: None,
                 score: None,
                 grade: None,
+                score_formula_version: None,
                 coverage_model: None,
                 snapshot_schema_version: None,
             },
@@ -4620,6 +4631,7 @@ mod tests {
                 git_sha: Some("def5678".into()),
                 score: Some(80.0),
                 grade: Some("B".into()),
+                score_formula_version: Some(fallow_output::HEALTH_SCORE_FORMULA_VERSION),
                 coverage_model: None,
                 snapshot_schema_version: None,
             },
@@ -4667,6 +4679,7 @@ mod tests {
                 git_sha: None,
                 score: None,
                 grade: None,
+                score_formula_version: None,
                 coverage_model: None,
                 snapshot_schema_version: None,
             },
@@ -4804,6 +4817,7 @@ mod tests {
                 git_sha: None,
                 score: None,
                 grade: None,
+                score_formula_version: None,
                 coverage_model: None,
                 snapshot_schema_version: None,
             },

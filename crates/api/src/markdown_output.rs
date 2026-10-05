@@ -1891,6 +1891,16 @@ fn write_trend_section(out: &mut String, report: &fallow_output::HealthReport) {
             .unwrap_or(&trend.compared_to.timestamp),
         sha_str,
     );
+    if let Some(current) = report.health_score.as_ref()
+        && trend.compared_to.score.is_some()
+        && !trend.metrics.iter().any(|metric| metric.name == "score")
+        && let Some(note) = fallow_output::health_score_comparison_note(
+            trend.compared_to.score_formula_version,
+            Some(current.formula_version),
+        )
+    {
+        let _ = writeln!(out, "*{note}*\n");
+    }
     out.push_str("| Metric | Previous | Current | Delta | Direction |\n");
     out.push_str("|:-------|:---------|:--------|:------|:----------|\n");
     for m in &trend.metrics {

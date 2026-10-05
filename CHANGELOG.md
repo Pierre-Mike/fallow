@@ -179,6 +179,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Unknown project directories keep conventional test patterns without dropping
   known projects' entries. The graph cache version increases to invalidate
   entry classifications from older builds.
+- **The health score penalizes hotspots only when their score reaches 50.**
+  Previously, the top-one-percent rank bucket could apply the maximum
+  hotspot penalty even when every file was below that threshold. Formula
+  version 3 uses the thresholded hotspot count; the rank
+  bucket remains a diagnostic. Limiting the hotspot display with `--top`
+  keeps the full score and snapshot metrics. Snapshots record the score
+  formula used, and
+  trends compare scores only when both formulas are known and equal. Raw
+  metric trends and historical scores remain available. Thanks to
+  [@PaulCailly](https://github.com/PaulCailly) for the report
+  ([#3203](https://github.com/fallow-rs/fallow/issues/3203)).
 
 - **An orphan module declaration file is now reported as an unused file.**
   Before, fallow made every `.d.ts`, `.d.mts` and `.d.cts` file an entry

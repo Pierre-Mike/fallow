@@ -20,6 +20,15 @@ These interfaces are covered by semver. Breaking changes require a major version
 
 ### JSON output schema
 
+- Formula version 3 corrects the health score hotspot penalty to use files
+  whose hotspot score reaches 50. Snapshot schema 12 adds optional
+  `score_formula_version` metadata, also exposed on a trend's `compared_to`
+  point. Older snapshots deserialize without a known formula. Historical
+  scores and raw metric comparisons remain available. A score delta requires
+  two present scores with known, equal formulas. The report `schema_version`
+  is unchanged because the metadata is optional and `health_score` already
+  includes its own `formula_version`.
+
 - **Whitespace is not part of the JSON contract**: consumers must parse JSON
   rather than compare or split raw text. `--format json` emits compact JSON by
   default, while global `--pretty` selects indented presentation. Both forms
