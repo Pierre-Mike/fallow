@@ -9705,6 +9705,11 @@ score?: (number | null)
  */
 grade?: (string | null)
 /**
+ * Formula used for the stored score; absent on legacy snapshots.
+ * A score delta is emitted only when this matches the current score formula.
+ */
+score_formula_version?: (number | null)
+/**
  * Coverage model used for CRAP computation in this snapshot.
  */
 coverage_model?: (CoverageModel | null)

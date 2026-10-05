@@ -19,7 +19,9 @@ use crate::CoverageModel;
 /// v11: Added optional `groups` (per-group vital signs, counts and score of a
 ///      `--group-by` run). Additive: an older binary ignores the field, and
 ///      this binary reads v1 to v10 files with `groups` absent.
-pub const SNAPSHOT_SCHEMA_VERSION: u32 = 11;
+/// v12: Added optional `score_formula_version` for project and group score
+///      compatibility. Older snapshots retain unknown formula identity.
+pub const SNAPSHOT_SCHEMA_VERSION: u32 = 12;
 
 /// Project-wide vital signs: a fixed set of metrics for trend tracking.
 ///
@@ -275,6 +277,10 @@ pub struct VitalSignsSnapshot {
     /// Letter grade (A/B/C/D/F). Added in schema v2.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub grade: Option<String>,
+    /// Formula used for the stored project and group scores. Absent on legacy
+    /// snapshots and when no score was computed; never inferred from tool version.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub score_formula_version: Option<u32>,
     /// Coverage model used for CRAP computation. Added in schema v3.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub coverage_model: Option<CoverageModel>,

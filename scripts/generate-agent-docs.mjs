@@ -740,9 +740,9 @@ export const formatCuratedSeedDrift = (comparison, { recording = false, recordPa
     "moved. Rewrite the curated cell in the skill tree when its prose no longer matches;",
     "`npm run generate:contracts` records the current seeds.",
     "A rewritten cell under npm/fallow/skills/fallow must also land in fallow-rs/fallow-skills:",
-    "the Public skills contract check compares the two. Merge a fallow-skills PR first, with",
-    "source-lock.json pinned to this branch's head commit; after the squash merge, pin it to",
-    "the merged commit.",
+    "merge the source change into main, then run `node scripts/sync-skills-companion.mjs`",
+    "and push the signed companion commit. PR checks compare the published skill with",
+    "the exact public base; push checks compare it with the current source.",
   );
   return lines.join("\n");
 };

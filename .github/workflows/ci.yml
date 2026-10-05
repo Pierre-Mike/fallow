@@ -685,6 +685,15 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # The companion can pin a skill change only after main contains it.
+      - name: Check out public base skill contract
+        if: github.event_name == 'pull_request'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: .fallow-skills-base
+          persist-credentials: false
       # The released product contract lives in this repository. The companion
       # skills repo packages it for agent hosts and may add host interface
       # files plus the declared plugin frontmatter transform.
@@ -697,6 +706,7 @@ jobs:
         with:
           node-version: '22'
       - name: Check public skill matches the Fallow source contract
+        working-directory: ${{ github.event_name == 'pull_request' && '.fallow-skills-base' || '.' }}
         env:
           FALLOW_SKILLS_DIR: ${{ github.workspace }}/.fallow-skills-src
         run: node scripts/vendor-skills.mjs --check

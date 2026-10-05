@@ -8,7 +8,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -289,4 +289,66 @@ test("a released skill without a published tree is drift", () => {
   const missing = join(tmpdir(), "vendor-skills-absent-published-tree");
   assert.deepEqual(diffTrees(canonical, missing).missing, ["SKILL.md"]);
   assert.equal(runCheck(canonical, missing, { renderDiffs: false }), 1);
+});
+
+test("base parity permits candidate changes but rejects published drift and strict current drift", () => {
+  const sourceSkill = "---\nname: fallow\nmetadata:\n  version: 1.0.0\n---\n# Fallow\n";
+  const publishedSkill = stripUnsupportedMetadata(sourceSkill);
+  const baseReference = "The released command contract.\n";
+  const candidateReference = "The candidate command contract adds a documented fix.\n";
+  const scriptFiles = Object.fromEntries(
+    ["vendor-skills.mjs", "released-skills.mjs"].map((name) => [
+      `scripts/${name}`,
+      readFileSync(new URL(name, import.meta.url), "utf8"),
+    ]),
+  );
+  const sourceFiles = {
+    ...scriptFiles,
+    "npm/fallow/skills/fallow/SKILL.md": sourceSkill,
+  };
+  const fixture = makeTree({
+    ...Object.fromEntries(
+      Object.entries(sourceFiles).map(([path, text]) => [`base/${path}`, text]),
+    ),
+    ...Object.fromEntries(
+      Object.entries(sourceFiles).map(([path, text]) => [`candidate/${path}`, text]),
+    ),
+    "base/npm/fallow/skills/fallow/references/cli.md": baseReference,
+    "candidate/npm/fallow/skills/fallow/references/cli.md": candidateReference,
+    "companion/fallow/skills/fallow/SKILL.md": publishedSkill,
+    "companion/fallow/skills/fallow/references/cli.md": baseReference,
+  });
+  const check = (source, args = ["--check"]) =>
+    spawnSync(process.execPath, ["scripts/vendor-skills.mjs", ...args], {
+      cwd: join(fixture, source),
+      env: { ...gitEnv(), FALLOW_SKILLS_DIR: join(fixture, "companion") },
+      encoding: "utf8",
+    });
+  try {
+    const base = check("base");
+    assert.equal(base.status, 0, base.stderr);
+    const current = check("candidate");
+    assert.equal(current.status, 1, current.stderr);
+    assert.match(current.stderr, /differs: references\/cli\.md/u);
+    assert.equal(
+      readFileSync(join(fixture, "companion/fallow/skills/fallow/references/cli.md"), "utf8"),
+      baseReference,
+      "checks must not publish candidate content",
+    );
+
+    writeFileSync(
+      join(fixture, "companion/fallow/skills/fallow/references/cli.md"),
+      "stale content\n",
+    );
+    const publishedDrift = check("base");
+    assert.equal(publishedDrift.status, 1, publishedDrift.stderr);
+    assert.match(publishedDrift.stderr, /differs: references\/cli\.md/u);
+
+    const synchronized = check("candidate", []);
+    assert.equal(synchronized.status, 0, synchronized.stderr);
+    const currentAfterSync = check("candidate");
+    assert.equal(currentAfterSync.status, 0, currentAfterSync.stderr);
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
+  }
 });

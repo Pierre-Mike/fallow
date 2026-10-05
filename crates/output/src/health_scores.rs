@@ -39,8 +39,10 @@ pub const MI_DENSITY_MIN_LINES: f64 = 50.0;
 /// (critical-complexity share, per-thousand-file dependency rates, top-1%
 /// hotspot share) so scores are comparable across repository sizes; older
 /// snapshots that lack the density fields fall back to the v1 aggregators.
+/// v3 counts only hotspots meeting [`HOTSPOT_SCORE_THRESHOLD`] against the
+/// top-1% file population, rather than penalizing every positive ranked entry.
 /// See `engine::vital_signs` for the full penalty formula.
-pub const HEALTH_SCORE_FORMULA_VERSION: u32 = 2;
+pub const HEALTH_SCORE_FORMULA_VERSION: u32 = 3;
 
 /// Formula version for the styling-health score (the CSS / design-system axis).
 /// Bumped independently of [`HEALTH_SCORE_FORMULA_VERSION`] whenever the styling

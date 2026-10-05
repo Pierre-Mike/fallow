@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { delimiter, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
@@ -245,6 +248,14 @@ test("parseGhChecks reads both gh messages for a pull request without checks", (
   }
 });
 
+test("parseGhChecks accepts failed-check JSON for required-name selection", () => {
+  const checks = [check("Commit messages", "fail")];
+  assert.deepEqual(parseGhChecks({ status: 1, stdout: JSON.stringify(checks), stderr: "" }), {
+    ok: true,
+    checks,
+  });
+});
+
 test("parseGhChecks reports a failed run, invalid JSON and a spawn error", () => {
   assert.deepEqual(parseGhChecks({ status: 1, stdout: "", stderr: "HTTP 502\n" }), {
     ok: false,
@@ -303,6 +314,515 @@ test("parseGhRuns turns each workflow run into a check", () => {
     ["CI=pending", "Lint=pass", "Bench=skipping", "Docs=cancel", "Coverage=fail"],
   );
 });
+
+const checkRun = (name, status, conclusion) => ({
+  __typename: "CheckRun",
+  name,
+  status,
+  conclusion,
+  detailsUrl: `https://example.invalid/current/${name}`,
+});
+
+const runWithFakeGh = ({ selected, rollups, runs = workflowRuns() }, args = []) => {
+  const root = mkdtempSync(join(tmpdir(), "ship-wait-checks-"));
+  try {
+    writeFileSync(join(root, "responses.json"), JSON.stringify({ selected, rollups, runs }));
+    writeFileSync(
+      join(root, "gh"),
+      [
+        "#!/usr/bin/env node",
+        'const fs = require("node:fs");',
+        'const path = require("node:path");',
+        'const responses = JSON.parse(fs.readFileSync(path.join(__dirname, "responses.json"), "utf8"));',
+        'const callsPath = path.join(__dirname, "calls.json");',
+        'const calls = fs.existsSync(callsPath) ? JSON.parse(fs.readFileSync(callsPath, "utf8")) : [];',
+        "const args = process.argv.slice(2);",
+        "calls.push(args);",
+        "fs.writeFileSync(callsPath, JSON.stringify(calls));",
+        'if (args[0] === "pr" && args[1] === "checks") {',
+        "  process.stdout.write(JSON.stringify(responses.selected));",
+        '} else if (args.some((arg) => arg.includes("statusCheckRollup"))) {',
+        '  const index = calls.filter((call) => call.some((arg) => arg.includes("statusCheckRollup"))).length - 1;',
+        "  const reply = responses.rollups[Math.min(index, responses.rollups.length - 1)];",
+        '  process.stdout.write(typeof reply === "string" ? reply : JSON.stringify(reply));',
+        '} else if (args[0] === "api") {',
+        "  const reply = responses.runs[args[1]];",
+        '  if (!reply || reply.error) { process.stderr.write(reply?.error ?? "missing workflow run"); process.exit(1); }',
+        "  process.stdout.write(JSON.stringify(reply));",
+        '} else if (args[0] === "pr" && args[1] === "view") {',
+        '  process.stdout.write(JSON.stringify({ mergeable: "MERGEABLE", mergeStateStatus: "BLOCKED" }));',
+        "} else {",
+        '  process.stderr.write("unexpected gh command");',
+        "  process.exit(1);",
+        "}",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    const result = spawnSync(
+      process.execPath,
+      [SCRIPT, "--pr", "7", "--interval", "1", "--timeout", "1", ...args],
+      { env: { ...process.env, PATH: `${root}${delimiter}${process.env.PATH}` }, encoding: "utf8" },
+    );
+    const calls = existsSync(join(root, "calls.json"))
+      ? JSON.parse(readFileSync(join(root, "calls.json"), "utf8"))
+      : [];
+    return { ...result, calls };
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+};
+
+const rollupReads = (calls) =>
+  calls.filter((args) => args.some((arg) => arg.includes("statusCheckRollup")));
+const fakeGhOptions = { skip: process.platform === "win32" };
+
+const EARLIER_START = "2026-10-05T11:05:44Z";
+const NEWER_START = "2026-10-05T11:05:51Z";
+const EARLIER_RUN = "200";
+const NEWER_RUN = "100";
+const RUN_ENDPOINT = "repos/example/project/actions/runs";
+const RUN_URL = "https://github.com/example/project/actions/runs";
+const workflowRuns = () =>
+  Object.fromEntries(
+    [
+      [EARLIER_RUN, EARLIER_START],
+      [NEWER_RUN, NEWER_START],
+    ].map(([id, created_at]) => [
+      `${RUN_ENDPOINT}/${id}`,
+      { created_at, html_url: `${RUN_URL}/${id}`, workflow_id: 7, head_sha: "a".repeat(40) },
+    ]),
+  );
+const attempt = (
+  conclusion,
+  startedAt,
+  workflowName = "Commitlint",
+  run = startedAt === EARLIER_START ? EARLIER_RUN : NEWER_RUN,
+) => ({
+  ...checkRun("Commit messages", "COMPLETED", conclusion),
+  startedAt,
+  workflowName,
+  detailsUrl: `${RUN_URL}/${run}/job/1`,
+});
+
+test(
+  "the CLI uses the newest same-workflow attempt in all-check and required modes",
+  fakeGhOptions,
+  () => {
+    for (const args of [[], ["--required"]]) {
+      for (const [older, newer] of [
+        ["CANCELLED", "SUCCESS"],
+        ["SUCCESS", "CANCELLED"],
+      ]) {
+        const result = runWithFakeGh(
+          {
+            selected: [check("Commit messages", "pass")],
+            rollups: [
+              { statusCheckRollup: [attempt(newer, NEWER_START), attempt(older, EARLIER_START)] },
+            ],
+          },
+          args,
+        );
+
+        assert.equal(result.status, newer === "SUCCESS" ? 0 : 1, result.stdout + result.stderr);
+      }
+    }
+  },
+);
+
+test(
+  "the CLI retains failures across workflows and ambiguous duplicate attempts",
+  fakeGhOptions,
+  () => {
+    for (const entries of [
+      [attempt("CANCELLED", EARLIER_START, "Other workflow"), attempt("SUCCESS", NEWER_START)],
+      [attempt("CANCELLED", NEWER_START), attempt("SUCCESS", NEWER_START)],
+      [
+        { ...attempt("CANCELLED", EARLIER_START), detailsUrl: "https://example.invalid/check" },
+        attempt("SUCCESS", NEWER_START),
+      ],
+      [attempt("CANCELLED", EARLIER_START, null), attempt("SUCCESS", NEWER_START, null)],
+      [attempt("CANCELLED", EARLIER_START, ""), attempt("SUCCESS", NEWER_START, "")],
+    ]) {
+      const result = runWithFakeGh({
+        selected: [check("Commit messages", "pass")],
+        rollups: [{ statusCheckRollup: entries }],
+      });
+
+      assert.equal(result.status, 1, result.stdout + result.stderr);
+    }
+  },
+);
+
+test(
+  "job starts and numeric run identifiers cannot reverse creation chronology",
+  fakeGhOptions,
+  () => {
+    for (const args of [[], ["--required"]]) {
+      const result = runWithFakeGh(
+        {
+          selected: [check("Commit messages", "pass")],
+          rollups: [
+            {
+              statusCheckRollup: [
+                attempt("SUCCESS", NEWER_START, "Commitlint", EARLIER_RUN),
+                attempt("CANCELLED", EARLIER_START, "Commitlint", NEWER_RUN),
+              ],
+            },
+          ],
+        },
+        args,
+      );
+
+      assert.equal(result.status, 1, result.stdout + result.stderr);
+    }
+  },
+);
+
+test(
+  "matching display names cannot hide a different workflow or commit failure",
+  fakeGhOptions,
+  () => {
+    for (const changed of [
+      { workflow_id: 8 },
+      { head_sha: "b".repeat(40) },
+      { created_at: EARLIER_START },
+    ]) {
+      const runs = workflowRuns();
+      Object.assign(runs[`${RUN_ENDPOINT}/${NEWER_RUN}`], changed);
+      const result = runWithFakeGh({
+        selected: [check("Commit messages", "pass")],
+        rollups: [
+          {
+            statusCheckRollup: [
+              attempt("CANCELLED", EARLIER_START),
+              attempt("SUCCESS", NEWER_START),
+            ],
+          },
+        ],
+        runs,
+      });
+
+      assert.equal(result.status, 1, result.stdout + result.stderr);
+    }
+  },
+);
+
+test(
+  "workflow metadata read failures cannot pass and optional metadata is not required",
+  fakeGhOptions,
+  () => {
+    const runs = workflowRuns();
+    runs[`${RUN_ENDPOINT}/${EARLIER_RUN}`] = { error: "HTTP 502" };
+    const entries = [attempt("SUCCESS", EARLIER_START), attempt("SUCCESS", NEWER_START)];
+    const failed = runWithFakeGh({
+      selected: [check("Commit messages", "pass")],
+      rollups: [{ statusCheckRollup: entries }],
+      runs,
+    });
+
+    assert.equal(failed.status, 2, failed.stdout + failed.stderr);
+    assert.match(failed.stderr, /HTTP 502/u);
+
+    const optional = runWithFakeGh(
+      {
+        selected: [check("Lint", "pass")],
+        rollups: [{ statusCheckRollup: [...entries, checkRun("Lint", "COMPLETED", "SUCCESS")] }],
+        runs,
+      },
+      ["--required"],
+    );
+    assert.equal(optional.status, 0, optional.stdout + optional.stderr);
+    assert.ok(optional.calls.every((args) => args[0] !== "api"));
+  },
+);
+
+test("superseded attempts do not inflate the minimum-check guard", fakeGhOptions, () => {
+  const attempts = [attempt("SUCCESS", EARLIER_START), attempt("SUCCESS", NEWER_START)];
+  const result = runWithFakeGh(
+    {
+      selected: [check("Commit messages", "pass")],
+      rollups: [
+        { statusCheckRollup: attempts },
+        { statusCheckRollup: [...attempts, checkRun("Lint", "COMPLETED", "SUCCESS")] },
+      ],
+    },
+    ["--min-checks", "2"],
+  );
+
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.equal(rollupReads(result.calls).length, 2, "superseded attempts are not distinct checks");
+});
+
+test("ambiguous attempts cannot inflate the minimum-check guard", fakeGhOptions, () => {
+  for (const sameRun of [false, true]) {
+    const runs = workflowRuns();
+    runs[`${RUN_ENDPOINT}/${NEWER_RUN}`].created_at = EARLIER_START;
+    const attempts = [
+      attempt("SUCCESS", EARLIER_START),
+      attempt("SUCCESS", NEWER_START, "Commitlint", sameRun ? EARLIER_RUN : NEWER_RUN),
+    ];
+    const result = runWithFakeGh(
+      {
+        selected: [check("Commit messages", "pass")],
+        rollups: [
+          { statusCheckRollup: attempts },
+          { statusCheckRollup: [...attempts, checkRun("Lint", "COMPLETED", "SUCCESS")] },
+        ],
+        runs,
+      },
+      ["--min-checks", "2"],
+    );
+
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.equal(rollupReads(result.calls).length, 2, "ambiguous attempts are one logical check");
+  }
+});
+
+test(
+  "confirmed different workflows with matching names remain distinct checks",
+  fakeGhOptions,
+  () => {
+    const runs = workflowRuns();
+    runs[`${RUN_ENDPOINT}/${NEWER_RUN}`].workflow_id = 8;
+    const known = [attempt("SUCCESS", EARLIER_START), attempt("SUCCESS", NEWER_START)];
+    const unknown = {
+      ...attempt("SUCCESS", NEWER_START),
+      detailsUrl: "https://example.invalid/check",
+    };
+    for (const extra of [[], [unknown]]) {
+      const result = runWithFakeGh(
+        {
+          selected: [check("Commit messages", "pass")],
+          rollups: [{ statusCheckRollup: [...known, ...extra] }, { statusCheckRollup: known }],
+          runs,
+        },
+        ["--min-checks", "2"],
+      );
+
+      assert.equal(result.status, 0, result.stdout + result.stderr);
+      assert.equal(
+        rollupReads(result.calls).length,
+        1,
+        "unknown metadata cannot collapse known distinct workflows",
+      );
+    }
+  },
+);
+
+test(
+  "unknown identities cannot inflate a mixed group or hide blocking states",
+  fakeGhOptions,
+  () => {
+    const runs = workflowRuns();
+    runs[`${RUN_ENDPOINT}/${NEWER_RUN}`].workflow_id = 8;
+    const known = [attempt("SUCCESS", EARLIER_START), attempt("SUCCESS", NEWER_START)];
+    const unknown = {
+      ...attempt("SUCCESS", NEWER_START),
+      detailsUrl: "https://example.invalid/check",
+    };
+    const count = runWithFakeGh(
+      {
+        selected: [check("Commit messages", "pass")],
+        rollups: [
+          { statusCheckRollup: [...known, unknown] },
+          { statusCheckRollup: [...known, unknown, checkRun("Lint", "COMPLETED", "SUCCESS")] },
+        ],
+        runs,
+      },
+      ["--min-checks", "3"],
+    );
+    assert.equal(count.status, 0, count.stdout + count.stderr);
+    assert.equal(rollupReads(count.calls).length, 2, "unknown identity proves no additional check");
+
+    for (const conclusion of ["CANCELLED", "FAILURE"]) {
+      const result = runWithFakeGh(
+        {
+          selected: [check("Commit messages", "pass")],
+          rollups: [{ statusCheckRollup: [...known, { ...unknown, conclusion }] }],
+          runs,
+        },
+        ["--min-checks", "2"],
+      );
+      assert.equal(result.status, 1, result.stdout + result.stderr);
+    }
+    const pending = runWithFakeGh(
+      {
+        selected: [check("Commit messages", "pass")],
+        rollups: [
+          { statusCheckRollup: [{ ...unknown, status: "QUEUED", conclusion: null }, ...known] },
+          { statusCheckRollup: [unknown, ...known] },
+        ],
+        runs,
+      },
+      ["--min-checks", "2"],
+    );
+    assert.equal(pending.status, 0, pending.stdout + pending.stderr);
+    assert.equal(rollupReads(pending.calls).length, 2, "unknown pending identity remains blocking");
+  },
+);
+
+test(
+  "ambiguous attempts preserve later cancellations, failures and pending states",
+  fakeGhOptions,
+  () => {
+    const older = attempt("SUCCESS", EARLIER_START);
+    for (const conclusion of ["CANCELLED", "FAILURE"]) {
+      const result = runWithFakeGh({
+        selected: [check("Commit messages", "pass")],
+        rollups: [
+          {
+            statusCheckRollup: [older, attempt(conclusion, NEWER_START, "Commitlint", EARLIER_RUN)],
+          },
+        ],
+      });
+      assert.equal(result.status, 1, result.stdout + result.stderr);
+    }
+    const pending = { ...attempt(null, null, "Commitlint", EARLIER_RUN), status: "QUEUED" };
+    const result = runWithFakeGh({
+      selected: [check("Commit messages", "pass")],
+      rollups: [
+        { statusCheckRollup: [older, pending] },
+        { statusCheckRollup: [older, attempt("SUCCESS", NEWER_START, "Commitlint", EARLIER_RUN)] },
+      ],
+    });
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.equal(
+      rollupReads(result.calls).length,
+      2,
+      "ambiguous pending attempt must stay visible",
+    );
+  },
+);
+
+test("queued attempts without a real start cannot be hidden by older passes", fakeGhOptions, () => {
+  for (const startedAt of [null, "0001-01-01T00:00:00Z"]) {
+    const older = attempt("SUCCESS", EARLIER_START);
+    const result = runWithFakeGh({
+      selected: [check("Commit messages", "pass")],
+      rollups: [
+        { statusCheckRollup: [older, { ...attempt(null, startedAt), status: "QUEUED" }] },
+        { statusCheckRollup: [older, attempt("SUCCESS", NEWER_START)] },
+      ],
+    });
+
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.equal(
+      rollupReads(result.calls).length,
+      2,
+      "unknown start must retain the pending attempt",
+    );
+    assert.equal(
+      result.calls.filter((args) => args[0] === "api").length,
+      2,
+      "immutable creation metadata is cached between polls",
+    );
+  }
+});
+
+test(
+  "the CLI rejects a newer same-head cancellation or failure hidden by an older pass",
+  fakeGhOptions,
+  () => {
+    for (const conclusion of ["CANCELLED", "FAILURE"]) {
+      const result = runWithFakeGh({
+        selected: [check("Commit messages", "pass")],
+        rollups: [{ statusCheckRollup: [checkRun("Commit messages", "COMPLETED", conclusion)] }],
+      });
+
+      assert.equal(result.status, 1, result.stdout + result.stderr);
+      assert.match(result.stdout, /checks failed/u);
+      assert.match(result.stdout, /Commit messages https:\/\/example.invalid\/current/u);
+    }
+  },
+);
+
+test(
+  "the CLI waits for a newer same-head pending check despite an older pass",
+  fakeGhOptions,
+  () => {
+    const result = runWithFakeGh({
+      selected: [check("Commit messages", "pass")],
+      rollups: [
+        { statusCheckRollup: [checkRun("Commit messages", "IN_PROGRESS", null)] },
+        { statusCheckRollup: [checkRun("Commit messages", "COMPLETED", "SUCCESS")] },
+      ],
+    });
+
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.equal(
+      rollupReads(result.calls).length,
+      2,
+      "pending rollup must be read again before passing",
+    );
+  },
+);
+
+test(
+  "required-only checks ignore optional cancellations and use current required states",
+  fakeGhOptions,
+  () => {
+    for (const conclusion of ["SUCCESS", "CANCELLED"]) {
+      const result = runWithFakeGh(
+        {
+          selected: [check("Commit messages", "pass")],
+          rollups: [
+            {
+              statusCheckRollup: [
+                checkRun("Commit messages", "COMPLETED", conclusion),
+                checkRun("Optional benchmark", "COMPLETED", "CANCELLED"),
+              ],
+            },
+          ],
+        },
+        ["--required"],
+      );
+
+      assert.equal(result.status, conclusion === "SUCCESS" ? 0 : 1, result.stdout + result.stderr);
+      assert.doesNotMatch(result.stdout, /Optional benchmark/u);
+      assert.ok(result.calls.some((args) => args.includes("--required")));
+    }
+  },
+);
+
+test("required pending and missing selected checks cannot pass by omission", fakeGhOptions, () => {
+  for (const requiredCheck of [[], [checkRun("Commit messages", "QUEUED", null)]]) {
+    const result = runWithFakeGh(
+      {
+        selected: [check("CI", "pass"), check("Commit messages", "pass")],
+        rollups: [
+          { statusCheckRollup: [checkRun("CI", "COMPLETED", "SUCCESS"), ...requiredCheck] },
+          {
+            statusCheckRollup: [
+              checkRun("CI", "COMPLETED", "SUCCESS"),
+              checkRun("Commit messages", "COMPLETED", "SUCCESS"),
+            ],
+          },
+        ],
+      },
+      ["--required"],
+    );
+
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.equal(
+      rollupReads(result.calls).length,
+      2,
+      "every selected required check must complete",
+    );
+  }
+});
+
+test(
+  "the CLI fails closed when the current-head rollup has invalid JSON or shape",
+  fakeGhOptions,
+  () => {
+    for (const reply of ["{", { statusCheckRollup: {} }]) {
+      const result = runWithFakeGh({ selected: [check("CI", "pass")], rollups: [reply] });
+
+      assert.equal(result.status, 2, result.stdout + result.stderr);
+      assert.match(result.stdout, /failed reads of the checks/u);
+    }
+  },
+);
 
 test("the CLI needs exactly one of a pull request and a commit", () => {
   for (const args of [

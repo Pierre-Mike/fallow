@@ -180,6 +180,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   known projects' entries. The graph cache version increases to invalidate
   entry classifications from older builds.
 
+- **The health score penalizes hotspots only when their score reaches 50.**
+  Previously, the top-one-percent rank bucket could apply the maximum
+  hotspot penalty even when every file was below that threshold. Formula
+  version 3 uses the thresholded hotspot count; the rank bucket remains a
+  diagnostic. Limiting the hotspot display with `--top` keeps the full
+  score and snapshot metrics. Snapshots record the score
+  formula used. Trends compare scores only when both formulas are known and
+  equal. Raw metric trends and historical scores remain available. Thanks to
+  [@PaulCailly](https://github.com/PaulCailly) for the report
+  ([#3203](https://github.com/fallow-rs/fallow/issues/3203)).
+
+- **Public skill updates can pass CI before companion publication.** Pull
+  requests check the published companion against their exact public base
+  commit. Candidate contracts and adapters retain their generation checks.
+  Pushes compare the current source, so landed drift fails until the
+  companion matches.
+
+- **The PR CI waiter uses the current GitHub check rollup.** A newer failed,
+  cancelled or pending check can no longer be hidden by an older success.
+  Required-only waits keep their scope, and superseded checks from the same
+  workflow use the newest run.
+
 - **An orphan module declaration file is now reported as an unused file.**
   Before, fallow made every `.d.ts`, `.d.mts` and `.d.cts` file an entry
   point and never reported one, so a stale declaration file and every module

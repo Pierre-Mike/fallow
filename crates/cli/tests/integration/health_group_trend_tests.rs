@@ -278,18 +278,192 @@ fn top_applies_to_each_group_and_keeps_the_counts() {
 }
 
 #[test]
+fn top_zero_hides_hotspots_without_changing_nonzero_scores_or_saved_vitals() {
+    let dir = project();
+    let root = dir.path();
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let mut events = Vec::new();
+    for path in ["src/a/one.ts", "src/b/one.ts"] {
+        for _ in 0..3 {
+            events.push(serde_json::json!({
+                "path": path,
+                "timestamp": timestamp,
+                "author": "maintainer@example.com",
+                "added": 1,
+                "deleted": 0,
+            }));
+        }
+    }
+    std::fs::write(
+        root.join("churn.json"),
+        serde_json::to_vec(&serde_json::json!({ "schema": "fallow-churn/v1", "events": events }))
+            .unwrap(),
+    )
+    .unwrap();
+    for grouped in [false, true] {
+        let run = |extra: &[&str]| -> Value {
+            let mut args = vec![
+                "--score",
+                "--hotspots",
+                "--churn-file",
+                "churn.json",
+                "--format",
+                "json",
+                "--quiet",
+            ];
+            if grouped {
+                args.extend(["--group-by", "owner"]);
+            }
+            args.extend_from_slice(extra);
+            let output = run_fallow_in_root("health", root, &args);
+            assert!(matches!(output.code, 0 | 1), "{}", output.stderr);
+            parse_json(&output)
+        };
+        let full = run(&[]);
+        let snapshot = root.join("top-zero-snapshot.json");
+        let snapshot_arg = snapshot.display().to_string();
+        let hidden = run(&["--top", "0", "--save-snapshot", &snapshot_arg]);
+        assert_eq!(full["hotspots"].as_array().unwrap().len(), 2);
+        assert!(
+            full["hotspots"].as_array().unwrap().iter().all(|hotspot| {
+                hotspot["score"].as_f64().unwrap() >= fallow_output::HOTSPOT_SCORE_THRESHOLD
+            }),
+            "{full:#}"
+        );
+        assert_eq!(hidden["hotspots"].as_array().map_or(0, Vec::len), 0);
+        assert_eq!(full["vital_signs"]["hotspot_count"], 2);
+        assert_eq!(full["health_score"]["penalties"]["hotspots"], 10.0);
+        assert_eq!(hidden["vital_signs"], full["vital_signs"]);
+        assert_eq!(hidden["health_score"], full["health_score"]);
+        let stored: Value = serde_json::from_slice(&std::fs::read(&snapshot).unwrap()).unwrap();
+        assert_eq!(stored["vital_signs"], full["vital_signs"]);
+        assert_eq!(stored["score"], full["health_score"]["score"]);
+        if grouped {
+            for key in ["@team/a", "@team/b"] {
+                let full_group = group(&full, key);
+                let hidden_group = group(&hidden, key);
+                assert_eq!(full_group["vital_signs"]["hotspot_count"], 1);
+                assert_eq!(full_group["health_score"]["penalties"]["hotspots"], 10.0);
+                assert_eq!(hidden_group["hotspots"].as_array().map_or(0, Vec::len), 0);
+                assert_eq!(hidden_group["vital_signs"], full_group["vital_signs"]);
+                assert_eq!(hidden_group["health_score"], full_group["health_score"]);
+            }
+        }
+    }
+}
+
+#[test]
+fn subthreshold_hotspots_keep_rank_counts_without_penalizing_project_or_groups() {
+    let dir = project();
+    let root = dir.path();
+    let mut low_complexity =
+        String::from("export function bOne(x: number): number {\n  let n = x;\n");
+    for i in 0..100 {
+        let _ = writeln!(low_complexity, "  n += {i};");
+    }
+    low_complexity.push_str("  return n;\n}\n");
+    std::fs::write(root.join("src/b/one.ts"), low_complexity).unwrap();
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let mut events = Vec::new();
+    for (path, commits) in [("src/a/one.ts", 3), ("src/b/one.ts", 30)] {
+        for _ in 0..commits {
+            events.push(serde_json::json!({
+                "path": path,
+                "timestamp": timestamp,
+                "author": "maintainer@example.com",
+                "added": 1,
+                "deleted": 0,
+            }));
+        }
+    }
+    let churn = serde_json::json!({ "schema": "fallow-churn/v1", "events": events });
+    std::fs::write(root.join("churn.json"), serde_json::to_vec(&churn).unwrap()).unwrap();
+    let full = health_json(
+        root,
+        &["--score", "--hotspots", "--churn-file", "churn.json"],
+    );
+    let limited = health_json(
+        root,
+        &[
+            "--score",
+            "--hotspots",
+            "--churn-file",
+            "churn.json",
+            "--top",
+            "1",
+        ],
+    );
+    assert_eq!(full["hotspots"].as_array().unwrap().len(), 2);
+    assert_eq!(limited["hotspots"].as_array().unwrap().len(), 1);
+    assert!(
+        full["hotspots"].as_array().unwrap().iter().all(|hotspot| {
+            let score = hotspot["score"].as_f64().unwrap();
+            score > 0.0 && score < fallow_output::HOTSPOT_SCORE_THRESHOLD
+        }),
+        "{full:#}"
+    );
+    for report in [&full, &limited] {
+        assert_eq!(report["vital_signs"]["hotspot_count"], 0);
+        assert_eq!(report["vital_signs"]["hotspot_top_pct_count"], 1);
+        assert_eq!(report["health_score"]["penalties"]["hotspots"], 0.0);
+        for key in ["@team/a", "@team/b"] {
+            let scoped = group(report, key);
+            assert_eq!(scoped["hotspot_count"], 1);
+            assert_eq!(scoped["vital_signs"]["hotspot_count"], 0);
+            assert_eq!(scoped["vital_signs"]["hotspot_top_pct_count"], 1);
+            assert_eq!(scoped["health_score"]["penalties"]["hotspots"], 0.0);
+            assert_eq!(scoped["health_score"], group(&full, key)["health_score"]);
+        }
+    }
+    assert_eq!(limited["health_score"], full["health_score"]);
+}
+
+#[test]
 fn snapshot_stores_groups_and_trend_from_compares_each_group() {
     let dir = project();
     let root = dir.path();
     let snapshot = root.join("baseline.json");
     let snapshot_arg = snapshot.display().to_string();
-    let saved = health_json(root, &["--score", "--save-snapshot", &snapshot_arg]);
+    let saved = health_json(
+        root,
+        &["--score", "--save-snapshot", &snapshot_arg, "--explain"],
+    );
     assert!(saved.get("health_trend").is_none());
+    for field in [
+        "health_score.formula_version",
+        "health_trend.compared_to.score_formula_version",
+    ] {
+        let metadata = &saved["_meta"]["metrics"][field];
+        assert_eq!(metadata["range"], "[1, infinity)");
+        assert!(
+            metadata["description"]
+                .as_str()
+                .is_some_and(|value| !value.is_empty())
+        );
+        assert!(
+            metadata["interpretation"]
+                .as_str()
+                .is_some_and(|value| !value.is_empty())
+        );
+    }
 
     let stored: Value =
         serde_json::from_str(&std::fs::read_to_string(&snapshot).expect("snapshot written"))
             .expect("snapshot JSON");
-    assert_eq!(stored["snapshot_schema_version"], 11);
+    assert_eq!(
+        stored["snapshot_schema_version"],
+        fallow_output::SNAPSHOT_SCHEMA_VERSION
+    );
+    assert_eq!(
+        stored["score_formula_version"],
+        saved["health_score"]["formula_version"]
+    );
     assert_eq!(stored["groups"]["grouped_by"], "owner");
     let stored_keys: Vec<&str> = stored["groups"]["groups"]
         .as_array()
@@ -321,6 +495,198 @@ fn snapshot_stores_groups_and_trend_from_compares_each_group() {
         .cloned()
         .expect("score metric for team b");
     assert!(b_score["delta"].as_f64().unwrap() <= 0.0, "{b_score:#}");
+}
+
+fn assert_formula_trend_outputs(
+    root: &Path,
+    snapshot_arg: &str,
+    trended: &Value,
+    previous_scored: bool,
+    comparable: bool,
+) {
+    let formula_omitted = previous_scored && !comparable;
+    let saved_report = root.join("formula-report.json");
+    std::fs::write(&saved_report, serde_json::to_vec(trended).unwrap()).unwrap();
+    for format in ["human", "markdown", "compact", "github-summary"] {
+        let direct = run_fallow_in_root(
+            "health",
+            root,
+            &[
+                "--group-by",
+                "owner",
+                "--trend-from",
+                snapshot_arg,
+                "--format",
+                format,
+                "--quiet",
+            ],
+        );
+        assert!(matches!(direct.code, 0 | 1), "{}", direct.stderr);
+        let mut outputs = vec![direct.stdout];
+        if matches!(format, "markdown" | "github-summary") {
+            let report_arg = saved_report.display().to_string();
+            let rerendered = run_fallow_in_root(
+                "report",
+                root,
+                &["--from", &report_arg, "--format", format, "--quiet"],
+            );
+            assert_eq!(rerendered.code, 0, "{}", rerendered.stderr);
+            outputs.push(rerendered.stdout);
+        }
+        for output in &outputs {
+            if format == "compact" {
+                assert_eq!(
+                    output.contains("trend:score-omitted:"),
+                    formula_omitted,
+                    "{output}"
+                );
+                assert_eq!(
+                    output.contains("trend:score:previous="),
+                    comparable,
+                    "{output}"
+                );
+            } else {
+                assert_eq!(
+                    output.contains("Score comparison omitted:"),
+                    formula_omitted,
+                    "{output}"
+                );
+                assert!(!output.contains("score comparison still valid"), "{output}");
+            }
+            if format == "github-summary" {
+                assert!(!output.contains("Enable `save-snapshot: true`"), "{output}");
+                assert_eq!(output.contains("pts vs previous"), comparable, "{output}");
+                if !previous_scored {
+                    assert!(
+                        output.contains("Score comparison unavailable for this snapshot."),
+                        "{output}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn formula_compatibility_preserves_group_raw_trends_and_explains_omitted_scores() {
+    let dir = project();
+    let root = dir.path();
+    let snapshot = root.join("formula-baseline.json");
+    let snapshot_arg = snapshot.display().to_string();
+    let saved = health_json(root, &["--score", "--save-snapshot", &snapshot_arg]);
+    let original: Value =
+        serde_json::from_str(&std::fs::read_to_string(&snapshot).expect("snapshot written"))
+            .expect("snapshot JSON");
+    let current_formula = saved["health_score"]["formula_version"].as_u64().unwrap();
+
+    for (previous_formula, previous_scored) in [
+        (None, true),
+        (Some(current_formula - 1), true),
+        (Some(current_formula), true),
+        (Some(current_formula), false),
+        (None, false),
+    ] {
+        let mut baseline = original.clone();
+        match previous_formula {
+            Some(formula) => baseline["score_formula_version"] = formula.into(),
+            None => {
+                baseline
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("score_formula_version");
+                baseline["snapshot_schema_version"] = 11.into();
+            }
+        }
+        if !previous_scored {
+            for field in ["score", "grade"] {
+                baseline.as_object_mut().unwrap().remove(field);
+                for group in baseline["groups"]["groups"].as_array_mut().unwrap() {
+                    group.as_object_mut().unwrap().remove(field);
+                }
+            }
+        }
+        std::fs::write(&snapshot, serde_json::to_vec(&baseline).unwrap()).unwrap();
+        let trended = health_json(root, &["--trend-from", &snapshot_arg]);
+        let comparable = previous_scored && previous_formula == Some(current_formula);
+        let project_trend = &trended["health_trend"];
+        assert_eq!(project_trend["compared_to"]["score"], baseline["score"]);
+        assert_eq!(project_trend["compared_to"]["grade"], baseline["grade"]);
+        assert_eq!(
+            project_trend["compared_to"]["score_formula_version"].as_u64(),
+            previous_formula
+        );
+        assert_eq!(
+            project_trend["metrics"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|metric| metric["name"] == "score"),
+            comparable,
+        );
+        assert!(
+            project_trend["metrics"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|metric| metric["name"] == "avg_cyclomatic")
+        );
+        for key in ["@team/a", "@team/b"] {
+            let group = group(&trended, key);
+            assert_eq!(group["trend_status"], "compared");
+            assert_eq!(
+                group["trend"]["metrics"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|metric| metric["name"] == "score"),
+                comparable,
+            );
+            assert!(
+                group["trend"]["metrics"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|metric| metric["name"] == "avg_cyclomatic")
+            );
+        }
+
+        assert_formula_trend_outputs(root, &snapshot_arg, &trended, previous_scored, comparable);
+    }
+}
+
+#[test]
+fn saved_report_comparison_note_uses_saved_current_formula() {
+    let dir = project();
+    let root = dir.path();
+    let snapshot = root.join("saved-formula-baseline.json");
+    let snapshot_arg = snapshot.display().to_string();
+    health_json(root, &["--score", "--save-snapshot", &snapshot_arg]);
+    let mut baseline: Value =
+        serde_json::from_str(&std::fs::read_to_string(&snapshot).unwrap()).unwrap();
+    let current_formula = baseline["score_formula_version"].as_u64().unwrap();
+    baseline["score_formula_version"] = (current_formula - 1).into();
+    std::fs::write(&snapshot, serde_json::to_vec(&baseline).unwrap()).unwrap();
+    let mut report = health_json(root, &["--trend-from", &snapshot_arg]);
+    report["health_score"]["formula_version"] = (current_formula - 1).into();
+    report["health_trend"]["compared_to"]["score_formula_version"] = current_formula.into();
+    let report_path = root.join("old-current-report.json");
+    std::fs::write(&report_path, serde_json::to_vec(&report).unwrap()).unwrap();
+    let report_arg = report_path.display().to_string();
+    for format in ["markdown", "github-summary"] {
+        let output = run_fallow_in_root(
+            "report",
+            root,
+            &["--from", &report_arg, "--format", format, "--quiet"],
+        );
+        assert_eq!(output.code, 0, "{}", output.stderr);
+        assert!(
+            output
+                .stdout
+                .contains("Score comparison omitted: score formulas differ."),
+            "{}",
+            output.stdout
+        );
+    }
 }
 
 #[test]

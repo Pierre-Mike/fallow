@@ -8026,6 +8026,13 @@
           ],
           "description": "Letter grade from the snapshot."
         },
+        "score_formula_version": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Formula used for the stored score; absent on legacy snapshots.\nA score delta is emitted only when this matches the current score formula."
+        },
         "coverage_model": {
           "anyOf": [
             {

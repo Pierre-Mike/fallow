@@ -253,7 +253,9 @@ pub use health_targets::{
     DirectCallerSymbolEvidence, EffortEstimate, EvidenceFunction, RecommendationCategory,
     RefactoringTarget, TargetEvidence, TargetThresholds,
 };
-pub use health_trends::{HealthTrend, TrendCount, TrendDirection, TrendMetric, TrendPoint};
+pub use health_trends::{
+    HealthTrend, TrendCount, TrendDirection, TrendMetric, TrendPoint, health_score_comparison_note,
+};
 pub use health_vital_signs::{
     CyclomaticPopulation, CyclomaticUnitPopulation, GroupSnapshot, RenderFanInTopComponent,
     RiskProfile, SNAPSHOT_SCHEMA_VERSION, SnapshotGrouping, VitalSigns, VitalSignsCounts,

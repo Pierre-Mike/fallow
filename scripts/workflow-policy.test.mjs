@@ -97,6 +97,32 @@ test("fuzz workflow runs every harness with bounded scheduled coverage", () => {
   }
 });
 
+test("public skill PR parity uses the exact base while push and candidate checks stay strict", () => {
+  const workflow = readWorkflow(".github/workflows/ci.yml");
+  const job = indentedBlock(workflow, "skills-vendor", 2);
+  const checkJob = indentedBlock(workflow, "check", 2);
+  const jsJob = indentedBlock(workflow, "js-lint", 2);
+  const aggregate = indentedBlock(workflow, "ci-ok", 2);
+  const rustPaths = listedPaths(indentedBlock(workflow, "rust", 12));
+
+  assert.match(
+    job,
+    /name: Check out public base skill contract\n\s+if: github\.event_name == 'pull_request'\n\s+uses: actions\/checkout@[^\n]+\n\s+with:\n\s+repository: \$\{\{ github\.repository \}\}\n\s+ref: \$\{\{ github\.event\.pull_request\.base\.sha \}\}\n\s+path: \.fallow-skills-base\n\s+persist-credentials: false/u,
+  );
+  assert.match(
+    job,
+    /working-directory: \$\{\{ github\.event_name == 'pull_request' && '\.fallow-skills-base' \|\| '\.' \}\}/u,
+  );
+  assert.match(job, /run: node scripts\/vendor-skills\.mjs --check/u);
+  assert.match(job, /FALLOW_SKILLS_DIR: \$\{\{ github\.workspace \}\}\/\.fallow-skills-src/u);
+  assert.doesNotMatch(job, /continue-on-error: true|contents: write|id-token: write/u);
+  assert.match(aggregate, /needs: \[[^\n]*skills-vendor/u);
+  assert.ok(rustPaths.includes("npm/fallow/skills/fallow/**"));
+  assert.ok(rustPaths.includes("npm/fallow/skills/fallow-setup/**"));
+  assert.match(checkJob, /run: CI=true npm run generate:contracts:check/u);
+  assert.match(jsJob, /run: npm run check:agent-adapters/u);
+});
+
 test("bundled skill validation uses the root lockfile without network fallback", () => {
   const workflow = readWorkflow(".github/workflows/ci.yml");
   const npmPackageJob = indentedBlock(workflow, "npm-package", 2);

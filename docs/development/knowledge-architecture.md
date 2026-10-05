@@ -73,6 +73,10 @@ Private consumers pin both values. The portable skill repository records the
 exact Fallow source commit, source root, target root, and declared transform.
 After a skill change lands on `main`, `node scripts/sync-skills-companion.mjs`
 prepares the signed companion commit. The maintainer pushes it.
+Pull requests compare the published companion with their exact public base
+commit, while required generation checks validate the candidate contracts and
+adapters. Pushes compare the current source and keep failing on landed drift
+until the companion is synchronized.
 Protocol consumers pin the public crate in their lockfile and verify published
 sidecar parity.
 

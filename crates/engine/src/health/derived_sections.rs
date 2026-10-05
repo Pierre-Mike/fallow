@@ -46,14 +46,13 @@ pub struct HealthDerivedSections {
     pub(crate) targets: Vec<RefactoringTarget>,
     pub(crate) target_thresholds: Option<fallow_output::TargetThresholds>,
     pub(crate) targets_ms: f64,
-    /// The hotspots and targets before `--top`, kept only for a grouped run
-    /// whose `--top` removed entries. Each group applies `--top` to its own
-    /// list.
+    /// Hotspots before `--top` for scoring, plus complete grouped targets.
+    /// Each group applies `--top` to its own displayed lists.
     pub(crate) group_lists: GroupUntruncatedLists,
 }
 
-/// Lists that `--top` truncated for the project report, kept complete for the
-/// groups of a `--group-by` run. `None` means the project list is complete.
+/// Lists before `--top`: hotspots serve project scoring and groups, while
+/// targets serve groups. `None` means the project list is complete.
 #[derive(Default)]
 pub struct GroupUntruncatedLists {
     pub(crate) hotspots: Option<Vec<HotspotEntry>>,
@@ -239,7 +238,11 @@ fn compute_filtered_hotspots(
     } else {
         (Vec::new(), None)
     };
-    let mut group_hotspots = super::grouping::untruncated_for_groups(input.opts, &hotspots);
+    let mut group_hotspots = input
+        .opts
+        .top
+        .filter(|&top| top < hotspots.len())
+        .map(|_| hotspots.clone());
     if let Some(top) = input.opts.top {
         hotspots.truncate(top);
     }

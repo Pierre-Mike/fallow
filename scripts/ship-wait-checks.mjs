@@ -16,6 +16,9 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 
 const GH_PENDING_EXIT = 8;
+const GH_FAILED_CHECK_EXIT = 1;
+const GITHUB_RUN_URL_PATTERN =
+  /^https:\/\/github\.com\/([\w.-]+)\/([\w.-]+)\/actions\/runs\/([1-9]\d*)(?:\/job\/[1-9]\d*)?$/u;
 // gh prints "no required checks reported" for `--required` when no required
 // check exists yet.
 const NO_CHECKS_PATTERN = /no (?:required )?checks reported/iu;
@@ -307,8 +310,9 @@ export const parseGhChecks = ({ error, status, stdout, stderr }) => {
   if (error) {
     return { ok: false, error: error.message };
   }
-  // gh exits with 8 while a check is pending. The JSON is still complete.
-  if (status === 0 || status === GH_PENDING_EXIT) {
+  // Pending and failed checks still have complete JSON for name selection.
+  const failedChecks = status === GH_FAILED_CHECK_EXIT && stdout.trim() !== "";
+  if (status === 0 || status === GH_PENDING_EXIT || failedChecks) {
     try {
       return { ok: true, checks: JSON.parse(stdout) };
     } catch (parseError) {
@@ -319,6 +323,195 @@ export const parseGhChecks = ({ error, status, stdout, stderr }) => {
     return { ok: true, checks: [] };
   }
   return { ok: false, error: stderr.trim() || `gh exited with ${status}` };
+};
+
+const rollupCheck = (entry) => {
+  if (
+    entry?.__typename === "CheckRun" &&
+    typeof entry.name === "string" &&
+    typeof entry.status === "string"
+  ) {
+    return {
+      name: entry.name,
+      bucket:
+        entry.status === "COMPLETED"
+          ? (RUN_BUCKETS.get(entry.conclusion?.toLowerCase()) ?? "fail")
+          : "pending",
+      link: entry.detailsUrl,
+    };
+  }
+  if (
+    entry?.__typename === "StatusContext" &&
+    typeof entry.context === "string" &&
+    typeof entry.state === "string"
+  ) {
+    const pending = entry.state === "PENDING" || entry.state === "EXPECTED";
+    return {
+      name: entry.context,
+      bucket: pending ? "pending" : entry.state === "SUCCESS" ? "pass" : "fail",
+      link: entry.targetUrl,
+    };
+  }
+  throw new Error("invalid statusCheckRollup entry");
+};
+
+const worstCheck = (checks) =>
+  checks.find(({ bucket }) => bucket === "pending") ??
+  checks.find(({ bucket }) => bucket === "fail") ??
+  checks.find(({ bucket }) => bucket === "cancel") ??
+  checks[0];
+
+const currentRollupChecks = (rollup, readRun, names) => {
+  const checks = rollup.map(rollupCheck);
+  const groups = new Map();
+  for (const [index, entry] of rollup.entries()) {
+    if (
+      entry.__typename !== "CheckRun" ||
+      typeof entry.workflowName !== "string" ||
+      entry.workflowName === "" ||
+      (names !== null && !names.has(entry.name))
+    ) {
+      continue;
+    }
+    const key = JSON.stringify([entry.workflowName, entry.name]);
+    const group = groups.get(key) ?? [];
+    group.push(index);
+    groups.set(key, group);
+  }
+  const removed = new Set();
+  for (const group of groups.values()) {
+    if (group.length < 2) {
+      continue;
+    }
+    const identities = new Map();
+    const unknown = [];
+    for (const index of group) {
+      const result = readRun === null ? { ok: true, run: null } : readRun(rollup[index].detailsUrl);
+      if (!result.ok) {
+        return result;
+      }
+      if (result.run === null) {
+        unknown.push(index);
+        continue;
+      }
+      const key = JSON.stringify([result.run.workflowId, result.run.head]);
+      const runs = identities.get(key) ?? [];
+      runs.push({ index, ...result.run });
+      identities.set(key, runs);
+    }
+    // Job start and completion order can differ from workflow creation order.
+    // Display names alone cannot distinguish different workflows or commits.
+    const representatives = [];
+    for (const runs of identities.values()) {
+      const newest = Math.max(...runs.map(({ createdAt }) => createdAt));
+      const latest = runs.filter(({ createdAt }) => createdAt === newest);
+      const active = latest.length === 1 ? latest : runs;
+      const first = runs[0].index;
+      checks[first] = worstCheck(active.map(({ index }) => checks[index]));
+      representatives.push(first);
+      for (const { index } of runs.slice(1)) {
+        removed.add(index);
+      }
+    }
+    // Unknown entries prove no additional identity, but must keep blocking.
+    if (unknown.length > 0) {
+      const first = representatives[0] ?? unknown[0];
+      const candidates = unknown.map((index) => checks[index]);
+      if (representatives.length > 0) {
+        candidates.unshift(checks[first]);
+      }
+      checks[first] = worstCheck(candidates);
+      for (const index of unknown) {
+        if (index !== first) {
+          removed.add(index);
+        }
+      }
+    }
+  }
+  return {
+    ok: true,
+    checks: checks.filter(
+      ({ name }, index) => !removed.has(index) && (names === null || names.has(name)),
+    ),
+  };
+};
+
+/**
+ * Read the authoritative current-head checks returned by `gh pr view`.
+ * Optional `readRun(url)` supplies workflow identity and creation metadata
+ * for duplicate checks; `names` limits the checks to the required selection.
+ */
+export const parseGhPrRollup = (
+  { error, status, stdout, stderr },
+  { readRun = null, names = null } = {},
+) => {
+  if (error) {
+    return { ok: false, error: error.message };
+  }
+  if (status !== 0) {
+    return { ok: false, error: stderr.trim() || `gh exited with ${status}` };
+  }
+  let rollup;
+  try {
+    rollup = JSON.parse(stdout)?.statusCheckRollup;
+  } catch (parseError) {
+    return { ok: false, error: `gh printed invalid JSON: ${parseError.message}` };
+  }
+  if (rollup === null) {
+    return { ok: true, checks: [] };
+  }
+  if (!Array.isArray(rollup)) {
+    return { ok: false, error: "gh printed invalid statusCheckRollup" };
+  }
+  try {
+    return currentRollupChecks(rollup, readRun, names);
+  } catch (parseError) {
+    return { ok: false, error: `gh printed invalid check rollup: ${parseError.message}` };
+  }
+};
+
+const ghRunMetadataReader = () => {
+  const cached = new Map();
+  return (detailsUrl) => {
+    const match = typeof detailsUrl === "string" ? GITHUB_RUN_URL_PATTERN.exec(detailsUrl) : null;
+    if (match === null) {
+      return { ok: true, run: null };
+    }
+    const [, owner, repo, id] = match;
+    const endpoint = `repos/${owner}/${repo}/actions/runs/${id}`;
+    if (cached.has(endpoint)) {
+      return { ok: true, run: cached.get(endpoint) };
+    }
+    const result = spawnSync("gh", ["api", endpoint, "--hostname", "github.com"], {
+      encoding: "utf8",
+    });
+    if (result.error || result.status !== 0) {
+      return {
+        ok: false,
+        error: result.error?.message ?? (result.stderr.trim() || `gh exited with ${result.status}`),
+      };
+    }
+    let data;
+    try {
+      data = JSON.parse(result.stdout);
+    } catch (parseError) {
+      return { ok: false, error: `gh printed invalid workflow-run JSON: ${parseError.message}` };
+    }
+    const createdAt = typeof data?.created_at === "string" ? Date.parse(data.created_at) : NaN;
+    if (
+      !(createdAt > 0) ||
+      data.html_url !== `https://github.com/${owner}/${repo}/actions/runs/${id}` ||
+      !Number.isSafeInteger(data.workflow_id) ||
+      data.workflow_id <= 0 ||
+      typeof data.head_sha !== "string" ||
+      !FULL_SHA_PATTERN.test(data.head_sha)
+    ) {
+      return { ok: false, error: "gh printed invalid workflow-run metadata" };
+    }
+    const run = { createdAt, workflowId: data.workflow_id, head: data.head_sha };
+    cached.set(endpoint, run);
+    return { ok: true, run };
+  };
 };
 
 /**
@@ -395,19 +588,52 @@ const ghRunsReader =
     return parseGhRuns(spawnSync("gh", args, { encoding: "utf8" }));
   };
 
-/** Read the checks of `pr` with `gh pr checks`. */
-const ghChecksReader =
-  ({ pr, repo, required }) =>
-  () => {
-    const args = ["pr", "checks", pr, "--json", "name,bucket,link"];
+/** Read current-head states; `gh pr checks --required` selects names only. */
+const ghChecksReader = ({ pr, repo, required }) => {
+  const readRun = ghRunMetadataReader();
+  return () => {
+    const args = ["pr", "view", pr, "--json", "statusCheckRollup"];
     if (repo !== null) {
       args.push("--repo", repo);
     }
+    let selected = null;
     if (required) {
-      args.push("--required");
+      const selection = ["pr", "checks", pr, "--required", "--json", "name,bucket,link"];
+      if (repo !== null) {
+        selection.push("--repo", repo);
+      }
+      selected = parseGhChecks(spawnSync("gh", selection, { encoding: "utf8" }));
+      if (!selected.ok) {
+        return selected;
+      }
+      if (
+        !Array.isArray(selected.checks) ||
+        selected.checks.some((check) => typeof check?.name !== "string")
+      ) {
+        return { ok: false, error: "gh printed invalid required-check selection" };
+      }
+      if (selected.checks.length === 0) {
+        return selected;
+      }
     }
-    return parseGhChecks(spawnSync("gh", args, { encoding: "utf8" }));
+    const names = selected === null ? null : new Set(selected.checks.map(({ name }) => name));
+    const current = parseGhPrRollup(spawnSync("gh", args, { encoding: "utf8" }), {
+      readRun,
+      names,
+    });
+    if (!current.ok || selected === null) {
+      return current;
+    }
+    const checks = current.checks;
+    const present = new Set(checks.map(({ name }) => name));
+    checks.push(
+      ...selected.checks
+        .filter(({ name }) => !present.has(name))
+        .map((check) => ({ ...check, bucket: "pending" })),
+    );
+    return { ok: true, checks };
   };
+};
 
 const positiveInteger = (name, value) => {
   if (!/^[1-9]\d*$/u.test(value)) {

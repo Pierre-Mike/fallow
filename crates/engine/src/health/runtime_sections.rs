@@ -106,7 +106,11 @@ fn prepare_health_vital_data_from_sections(
         file_paths: input.file_paths,
         score_output: input.analysis_data.score_output.as_ref(),
         file_scores_slice,
-        hotspots: &derived_sections.hotspots,
+        hotspots: derived_sections
+            .group_lists
+            .hotspots
+            .as_deref()
+            .unwrap_or(&derived_sections.hotspots),
         dupes_report: derived_sections.dupes_report.as_ref(),
         candidate_paths: &derived_sections.candidate_paths,
         total_files: input.files.len(),
