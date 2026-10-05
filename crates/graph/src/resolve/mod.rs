@@ -106,6 +106,7 @@ pub struct ResolveAllImportsInput<'a> {
 /// every resolution instead of rebuilding this state per call.
 pub struct ResolverSession {
     resolver: oxc_resolver::Resolver,
+    script_resolver: oxc_resolver::Resolver,
     style_resolver: oxc_resolver::Resolver,
     extensions: Vec<String>,
     condition_names: Vec<String>,
@@ -139,6 +140,7 @@ impl ResolverSession {
         let extensions = build_extensions(input.active_plugins);
         let condition_names = build_condition_names(input.active_plugins, input.extra_conditions);
         let resolver = create_resolver(input.root, input.active_plugins, input.extra_conditions);
+        let script_resolver = specifier::create_script_resolver(&resolver);
         let mut style_conditions = input.extra_conditions.to_vec();
         style_conditions.push("sass".to_string());
         style_conditions.push("style".to_string());
@@ -152,6 +154,7 @@ impl ResolverSession {
 
         Self {
             resolver,
+            script_resolver,
             style_resolver,
             extensions,
             condition_names,
@@ -211,6 +214,7 @@ pub fn resolve_all_imports_with_session(
 
     let ctx = ResolveContext {
         resolver: &session.resolver,
+        script_resolver: &session.script_resolver,
         style_resolver: &session.style_resolver,
         extensions: &session.extensions,
         path_to_id: &path_to_id,

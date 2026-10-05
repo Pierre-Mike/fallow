@@ -46,6 +46,51 @@ pub(super) fn create_resolver(
     ))
 }
 
+/// Derive script extension inference while sharing filesystem and PnP caches.
+///
+/// Fully specified asset targets remain valid; only extension inference excludes
+/// assets and component files so they cannot shadow script directory modules.
+pub(super) fn create_script_resolver(resolver: &Resolver) -> Resolver {
+    let mut options = resolver.options().clone();
+    options.extensions.retain(|extension| {
+        matches!(
+            extension.rsplit('.').next(),
+            Some(
+                "ts" | "tsx"
+                    | "mts"
+                    | "cts"
+                    | "gts"
+                    | "js"
+                    | "jsx"
+                    | "mjs"
+                    | "cjs"
+                    | "gjs"
+                    | "json"
+            )
+        )
+    });
+    resolver.clone_with_options(options)
+}
+
+/// Resolve a directory-relative request using the import's extension policy.
+///
+/// The broad fallback preserves implicit assets when no script module resolves.
+pub(super) fn resolve_with_extension_policy(
+    ctx: &ResolveContext<'_>,
+    directory: &Path,
+    specifier: &str,
+    style_context: bool,
+) -> Result<Resolution, ResolveError> {
+    if !style_context {
+        super::work::note_oxc_resolve();
+        if let Ok(resolved) = ctx.script_resolver.resolve(directory, specifier) {
+            return Ok(resolved);
+        }
+    }
+    super::work::note_oxc_resolve();
+    ctx.resolver.resolve(directory, specifier)
+}
+
 /// Build the [`ResolveOptions`] behind [`create_resolver`].
 ///
 /// Exposed so a second resolver with different conditions can be derived from
@@ -154,7 +199,7 @@ const fn is_tsconfig_error(err: &ResolveError) -> bool {
     )
 }
 
-enum ResolveFileAttempt {
+pub(super) enum ResolveFileAttempt {
     Resolved {
         resolution: Resolution,
         used_tsconfig_fallback: bool,
@@ -168,11 +213,53 @@ enum ResolveFileAttempt {
 /// tsconfig-loading failure, retry with `resolve(dir, specifier)` which skips
 /// tsconfig entirely. Emits a single `tracing::warn!` per unique error message
 /// so users get one actionable hint per broken tsconfig without log spam.
-fn resolve_file_with_tsconfig_fallback(
+pub(super) fn resolve_file_with_tsconfig_fallback(
     ctx: &ResolveContext<'_>,
     from_file: &Path,
     specifier: &str,
+    from_style: bool,
 ) -> ResolveFileAttempt {
+    if from_style || is_style_file(from_file) {
+        return resolve_file_with_resolver_and_tsconfig_fallback(
+            ctx,
+            ctx.resolver,
+            from_file,
+            specifier,
+        );
+    }
+    // Most Node-protocol requests resolve externally. One broad attempt
+    // preserves that path and tsconfig remaps, including implicit assets.
+    // Only successful remaps need the script lookup for directory priority.
+    if specifier.starts_with("node:") {
+        let broad = resolve_file_with_resolver_and_tsconfig_fallback(
+            ctx,
+            ctx.resolver,
+            from_file,
+            specifier,
+        );
+        if matches!(broad, ResolveFileAttempt::Failed { .. }) {
+            return broad;
+        }
+        let attempt = resolve_file_with_resolver_and_tsconfig_fallback(
+            ctx,
+            ctx.script_resolver,
+            from_file,
+            specifier,
+        );
+        if matches!(attempt, ResolveFileAttempt::Resolved { .. }) {
+            return attempt;
+        }
+        return broad;
+    }
+    let attempt = resolve_file_with_resolver_and_tsconfig_fallback(
+        ctx,
+        ctx.script_resolver,
+        from_file,
+        specifier,
+    );
+    if matches!(attempt, ResolveFileAttempt::Resolved { .. }) {
+        return attempt;
+    }
     resolve_file_with_resolver_and_tsconfig_fallback(ctx, ctx.resolver, from_file, specifier)
 }
 
@@ -237,6 +324,7 @@ fn try_root_relative_specifier(
     ctx: &ResolveContext<'_>,
     from_file: &Path,
     specifier: &str,
+    from_style: bool,
 ) -> Option<ResolveResult> {
     if !specifier.starts_with('/') || !is_root_relative_importer(from_file) {
         return None;
@@ -244,16 +332,17 @@ fn try_root_relative_specifier(
 
     let relative = format!(".{specifier}");
     let source_dir = from_file.parent().unwrap_or(ctx.root);
-    if let Some(result) = resolve_root_relative_from_dir(ctx, source_dir, &relative) {
+    if let Some(result) = resolve_root_relative_from_dir(ctx, source_dir, &relative, from_style) {
         return Some(result);
     }
     if let Some(package_dir) = nearest_package_dir_below_root(ctx.root, source_dir)
-        && let Some(result) = resolve_root_relative_from_dir(ctx, package_dir, &relative)
+        && let Some(result) =
+            resolve_root_relative_from_dir(ctx, package_dir, &relative, from_style)
     {
         return Some(result);
     }
     if source_dir != ctx.root
-        && let Some(result) = resolve_root_relative_from_dir(ctx, ctx.root, &relative)
+        && let Some(result) = resolve_root_relative_from_dir(ctx, ctx.root, &relative, from_style)
     {
         return Some(result);
     }
@@ -302,9 +391,9 @@ fn resolve_root_relative_from_dir(
     ctx: &ResolveContext<'_>,
     source_dir: &Path,
     relative: &str,
+    style_context: bool,
 ) -> Option<ResolveResult> {
-    super::work::note_oxc_resolve();
-    let resolved = ctx.resolver.resolve(source_dir, relative).ok()?;
+    let resolved = resolve_with_extension_policy(ctx, source_dir, relative, style_context).ok()?;
     let resolved_path = resolved.path();
     if let Some(&file_id) = ctx.raw_path_to_id.get(resolved_path) {
         return Some(ResolveResult::InternalModule(file_id));
@@ -1065,8 +1154,8 @@ fn try_tsconfig_alias_directory(
     }
     let parent = target.parent()?;
     let name = target.file_name()?.to_str()?;
-    super::work::note_oxc_resolve();
-    let resolved = ctx.resolver.resolve(parent, name).ok()?;
+    let relative = format!("./{name}");
+    let resolved = resolve_with_extension_policy(ctx, parent, &relative, style_context).ok()?;
     resolve_tsconfig_alias_candidate(ctx, resolved.path())
 }
 
@@ -1515,7 +1604,11 @@ impl ResolvedPathContext<'_, '_> {
     fn package_or_external_result(&self, path: &Path) -> Option<ResolveResult> {
         if let Some(pkg_name) = package_usage_name_for_resolved_package(self.specifier, path) {
             if self.ctx.workspace_roots.contains_key(pkg_name.as_str())
-                && let Some(result) = try_workspace_package_fallback(self.ctx, self.specifier)
+                && let Some(result) = try_workspace_package_fallback(
+                    self.ctx,
+                    self.specifier,
+                    self.from_style || is_style_file(self.from_file),
+                )
             {
                 return Some(result);
             }
@@ -1633,7 +1726,7 @@ pub(super) fn resolve_specifier(
                 .package_usage_name()
                 .is_some_and(|package| request.names_package_file(specifier, package))
             && matches!(
-                resolve_file_with_tsconfig_fallback(ctx, from_file, specifier),
+                resolve_file_with_tsconfig_fallback(ctx, from_file, specifier, from_style),
                 ResolveFileAttempt::Resolved { .. }
             )
         {
@@ -1681,8 +1774,13 @@ fn resolve_plain_specifier(
     if let Some((_mapped, base)) = mapped
         && (specifier.starts_with("./") || specifier.starts_with("../"))
     {
-        return try_import_map_relative(ctx, base, specifier)
-            .unwrap_or_else(|| ResolveResult::Unresolvable(specifier.to_string()));
+        return try_import_map_relative(
+            ctx,
+            base,
+            specifier,
+            from_style || is_style_file(from_file),
+        )
+        .unwrap_or_else(|| ResolveResult::Unresolvable(specifier.to_string()));
     }
 
     if let Some(result) = try_pre_file_resolution_fallbacks(ctx, from_file, specifier, from_style) {
@@ -1719,10 +1817,16 @@ fn try_import_map_relative(
     ctx: &ResolveContext<'_>,
     declaring_dir: &Path,
     relative: &str,
+    style_context: bool,
 ) -> Option<ResolveResult> {
     let config_file = declaring_dir.join("__fallow_import_map_resolve__");
-    super::work::note_oxc_resolve();
-    let resolved = ctx.resolver.resolve_file(&config_file, relative).ok()?;
+    let ResolveFileAttempt::Resolved {
+        resolution: resolved,
+        ..
+    } = resolve_file_with_tsconfig_fallback(ctx, &config_file, relative, style_context)
+    else {
+        return None;
+    };
     lookup_internal_file_id(ctx, resolved.path()).map(ResolveResult::InternalModule)
 }
 
@@ -1736,7 +1840,7 @@ fn try_pre_file_resolution_fallbacks(
         return Some(result);
     }
 
-    if let Some(result) = try_root_relative_specifier(ctx, from_file, specifier) {
+    if let Some(result) = try_root_relative_specifier(ctx, from_file, specifier, from_style) {
         return Some(result);
     }
 
@@ -1754,7 +1858,7 @@ fn resolve_file_or_failed(
     from_style: bool,
     flags: FailedSpecifierFlags,
 ) -> ResolveResult {
-    match resolve_file_with_tsconfig_fallback(ctx, from_file, specifier) {
+    match resolve_file_with_tsconfig_fallback(ctx, from_file, specifier, from_style) {
         ResolveFileAttempt::Resolved {
             resolution: resolved,
             used_tsconfig_fallback,
@@ -1910,6 +2014,7 @@ fn resolve_failed_specifier(
         return resolve_failed_alias_specifier(
             ctx,
             specifier,
+            from_style || is_style_file(from_file),
             flags.is_bare,
             matches_tsconfig_path_alias,
         );
@@ -1939,7 +2044,12 @@ fn resolve_failed_regular_specifier(
         return ResolveResult::Unresolvable(specifier.to_string());
     }
     if is_bare && is_valid_package_name(specifier) {
-        return resolve_failed_bare_package_specifier(ctx, specifier, matches_tsconfig_path_alias);
+        return resolve_failed_bare_package_specifier(
+            ctx,
+            specifier,
+            from_style || is_style_file(from_file),
+            matches_tsconfig_path_alias,
+        );
     }
     ResolveResult::Unresolvable(specifier.to_string())
 }
@@ -1988,15 +2098,16 @@ fn try_failed_package_fallbacks(
 fn resolve_failed_alias_specifier(
     ctx: &ResolveContext<'_>,
     specifier: &str,
+    style_context: bool,
     is_bare: bool,
     matches_tsconfig_path_alias: bool,
 ) -> ResolveResult {
-    if let Some(result) = try_path_alias_fallback(ctx, specifier) {
+    if let Some(result) = try_path_alias_fallback(ctx, specifier, style_context) {
         return result;
     }
     if is_bare
         && is_valid_package_name(specifier)
-        && let Some(result) = try_workspace_package_fallback(ctx, specifier)
+        && let Some(result) = try_workspace_package_fallback(ctx, specifier, style_context)
     {
         return result;
     }
@@ -2009,9 +2120,10 @@ fn resolve_failed_alias_specifier(
 fn resolve_failed_bare_package_specifier(
     ctx: &ResolveContext<'_>,
     specifier: &str,
+    style_context: bool,
     matches_tsconfig_path_alias: bool,
 ) -> ResolveResult {
-    if let Some(result) = try_workspace_package_fallback(ctx, specifier) {
+    if let Some(result) = try_workspace_package_fallback(ctx, specifier, style_context) {
         return result;
     }
     if matches_tsconfig_path_alias {
@@ -2281,8 +2393,10 @@ mod tests {
         let tsconfig_warned = std::sync::Mutex::new(FxHashSet::default());
         let tsconfig_cache = TsconfigCache::default();
         let canonicalize_cache = CanonicalizeCache::default();
+        let script_resolver = crate::resolve::specifier::create_script_resolver(&resolver);
         let ctx = ResolveContext {
             resolver: &resolver,
+            script_resolver: &script_resolver,
             style_resolver: &style_resolver,
             extensions: &extensions,
             path_to_id: &path_to_id,
@@ -3114,8 +3228,10 @@ mod tests {
         let tsconfig_warned = std::sync::Mutex::new(FxHashSet::default());
         let tsconfig_cache = TsconfigCache::default();
         let canonicalize_cache = CanonicalizeCache::default();
+        let script_resolver = crate::resolve::specifier::create_script_resolver(&resolver);
         let ctx = ResolveContext {
             resolver: &resolver,
+            script_resolver: &script_resolver,
             style_resolver: &style_resolver,
             extensions: &extensions,
             path_to_id: &path_to_id,
@@ -3147,6 +3263,119 @@ mod tests {
                 r#"{"compilerOptions":{}}"#,
             )
             .unwrap();
+        }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "tempdir is blocked by Miri isolation")]
+    fn node_protocol_without_remapping_does_not_retry_asset_extensions() {
+        let temp = tempdir().unwrap();
+        let root = temp.path();
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("src/index.ts"), "").unwrap();
+
+        with_ctx_at_root(root, |ctx| {
+            let (result, work) = crate::resolve::work::in_module_scope(|| {
+                super::resolve_specifier(ctx, &root.join("src/index.ts"), "node:path", false)
+            });
+            assert!(
+                matches!(result, super::ResolveResult::NpmPackage(package) if package == "node:path")
+            );
+            assert_eq!(work.oxc_resolve_calls, 1);
+        });
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "tempdir is blocked by Miri isolation")]
+    fn node_protocol_explicit_tsconfig_asset_remapping_keeps_its_target() {
+        let temp = tempdir().unwrap();
+        let root = temp.path();
+        fs::create_dir_all(root.join("src/path")).unwrap();
+        fs::write(root.join("src/index.ts"), "").unwrap();
+        fs::write(root.join("src/path.vue"), "<template />").unwrap();
+        fs::write(root.join("src/path/index.ts"), "export const unused = 1;").unwrap();
+        fs::write(
+            root.join("tsconfig.json"),
+            r#"{"compilerOptions":{"paths":{"node:path":["./src/path.vue"]}},"include":["src"]}"#,
+        )
+        .unwrap();
+
+        with_ctx_at_root(root, |ctx| {
+            let attempt = super::resolve_file_with_tsconfig_fallback(
+                ctx,
+                &root.join("src/index.ts"),
+                "node:path",
+                false,
+            );
+            let super::ResolveFileAttempt::Resolved { resolution, .. } = attempt else {
+                panic!("explicit node:path alias must resolve");
+            };
+            assert_eq!(
+                dunce::canonicalize(resolution.path()).unwrap(),
+                dunce::canonicalize(root.join("src/path.vue")).unwrap()
+            );
+        });
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "tempdir is blocked by Miri isolation")]
+    fn node_protocol_tsconfig_remaps_use_script_priority_and_asset_fallback() {
+        for (paths, with_script, expected) in [
+            (r#"{"node:path":["./src/path"]}"#, true, "src/path/index.ts"),
+            (r#"{"node:path":["./src/path"]}"#, false, "src/path.vue"),
+            (r#"{"*":["./src/path"]}"#, true, "src/path/index.ts"),
+            (r#"{"*":["./src/path"]}"#, false, "src/path.vue"),
+        ] {
+            let temp = tempdir().unwrap();
+            let root = temp.path();
+            fs::create_dir_all(root.join("src")).unwrap();
+            fs::write(root.join("src/index.ts"), "").unwrap();
+            fs::write(root.join("src/path.vue"), "<template />").unwrap();
+            if with_script {
+                fs::create_dir_all(root.join("src/path")).unwrap();
+                fs::write(root.join("src/path.css"), "body {}").unwrap();
+                fs::write(root.join("src/path/index.ts"), "export const used = 1;").unwrap();
+            }
+            fs::write(
+                root.join("tsconfig.json"),
+                format!(r#"{{"compilerOptions":{{"paths":{paths}}},"include":["src"]}}"#),
+            )
+            .unwrap();
+
+            with_ctx_at_root(root, |ctx| {
+                let attempt = super::resolve_file_with_tsconfig_fallback(
+                    ctx,
+                    &root.join("src/index.ts"),
+                    "node:path",
+                    false,
+                );
+                let super::ResolveFileAttempt::Resolved { resolution, .. } = attempt else {
+                    panic!("node:path alias must resolve: {paths}");
+                };
+                assert_eq!(
+                    dunce::canonicalize(resolution.path()).unwrap(),
+                    dunce::canonicalize(root.join(expected)).unwrap(),
+                    "{paths}"
+                );
+
+                let (style, work) = crate::resolve::work::in_module_scope(|| {
+                    super::resolve_file_with_tsconfig_fallback(
+                        ctx,
+                        &root.join("src/index.ts"),
+                        "node:path",
+                        true,
+                    )
+                });
+                let super::ResolveFileAttempt::Resolved { resolution, .. } = style else {
+                    panic!("stylesheet node:path alias must resolve: {paths}");
+                };
+                assert_eq!(
+                    dunce::canonicalize(resolution.path()).unwrap(),
+                    dunce::canonicalize(root.join("src/path.vue")).unwrap(),
+                    "{paths}"
+                );
+                assert_eq!(work.oxc_resolve_calls, 1);
+            });
         }
     }
 

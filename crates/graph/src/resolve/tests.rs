@@ -51,8 +51,10 @@ fn with_empty_ctx<F: FnOnce(&ResolveContext)>(f: F) {
     let tsconfig_warned = std::sync::Mutex::new(FxHashSet::default());
     let tsconfig_cache = TsconfigCache::default();
     let canonicalize_cache = CanonicalizeCache::default();
+    let script_resolver = crate::resolve::specifier::create_script_resolver(&resolver);
     let ctx = ResolveContext {
         resolver: &resolver,
+        script_resolver: &script_resolver,
         style_resolver: &style_resolver,
         extensions: &extensions,
         path_to_id: &path_to_id,
@@ -227,8 +229,10 @@ fn vitest_mock_operations_resolve_canonical_targets_and_abstain_on_missing() {
     let tsconfig_warned = std::sync::Mutex::new(FxHashSet::default());
     let tsconfig_cache = TsconfigCache::default();
     let canonicalize_cache = CanonicalizeCache::default();
+    let script_resolver = crate::resolve::specifier::create_script_resolver(&resolver);
     let ctx = ResolveContext {
         resolver: &resolver,
+        script_resolver: &script_resolver,
         style_resolver: &style_resolver,
         extensions: &extensions,
         path_to_id: &path_to_id,
@@ -328,8 +332,10 @@ fn cross_tsconfig_bare_alias_upgrades_replacement_target() {
     let tsconfig_warned = std::sync::Mutex::new(FxHashSet::default());
     let tsconfig_cache = TsconfigCache::default();
     let canonicalize_cache = CanonicalizeCache::default();
+    let script_resolver = crate::resolve::specifier::create_script_resolver(&resolver);
     let ctx = ResolveContext {
         resolver: &resolver,
+        script_resolver: &script_resolver,
         style_resolver: &style_resolver,
         extensions: &extensions,
         path_to_id: &path_to_id,
@@ -1742,8 +1748,10 @@ fn pnpm_package_source_alias_preserves_declared_import_name() {
     let tsconfig_warned = std::sync::Mutex::new(FxHashSet::default());
     let tsconfig_cache = TsconfigCache::default();
     let canonicalize_cache = CanonicalizeCache::default();
+    let script_resolver = crate::resolve::specifier::create_script_resolver(&resolver);
     let ctx = ResolveContext {
         resolver: &resolver,
+        script_resolver: &script_resolver,
         style_resolver: &style_resolver,
         extensions: &extensions,
         path_to_id: &path_to_id,
@@ -1805,8 +1813,10 @@ fn pnpm_jsr_package_source_alias_preserves_declared_import_name() {
     let tsconfig_warned = std::sync::Mutex::new(FxHashSet::default());
     let tsconfig_cache = TsconfigCache::default();
     let canonicalize_cache = CanonicalizeCache::default();
+    let script_resolver = crate::resolve::specifier::create_script_resolver(&resolver);
     let ctx = ResolveContext {
         resolver: &resolver,
+        script_resolver: &script_resolver,
         style_resolver: &style_resolver,
         extensions: &extensions,
         path_to_id: &path_to_id,
@@ -2007,8 +2017,10 @@ fn specifier_plugin_alias_match_returns_unresolvable() {
     let tsconfig_warned = std::sync::Mutex::new(FxHashSet::default());
     let tsconfig_cache = TsconfigCache::default();
     let canonicalize_cache = CanonicalizeCache::default();
+    let script_resolver = crate::resolve::specifier::create_script_resolver(&resolver);
     let ctx = ResolveContext {
         resolver: &resolver,
+        script_resolver: &script_resolver,
         style_resolver: &style_resolver,
         extensions: &extensions,
         path_to_id: &path_to_id,
@@ -2538,8 +2550,10 @@ fn bare_at_alias_does_not_swallow_scoped_npm_packages() {
     let tsconfig_warned = std::sync::Mutex::new(FxHashSet::default());
     let tsconfig_cache = TsconfigCache::default();
     let canonicalize_cache = CanonicalizeCache::default();
+    let script_resolver = crate::resolve::specifier::create_script_resolver(&resolver);
     let ctx = ResolveContext {
         resolver: &resolver,
+        script_resolver: &script_resolver,
         style_resolver: &style_resolver,
         extensions: &extensions,
         path_to_id: &path_to_id,
@@ -2686,8 +2700,10 @@ fn deno_import_maps_follow_nearest_package_scope_and_declaring_base() {
     let tsconfig_warned = std::sync::Mutex::new(FxHashSet::default());
     let tsconfig_cache = TsconfigCache::default();
     let canonicalize_cache = CanonicalizeCache::default();
+    let script_resolver = crate::resolve::specifier::create_script_resolver(&resolver);
     let ctx = ResolveContext {
         resolver: &resolver,
+        script_resolver: &script_resolver,
         style_resolver: &style_resolver,
         extensions: &extensions,
         path_to_id: &path_to_id,
