@@ -37,6 +37,7 @@ fn alias_match_remainder<'a>(specifier: &'a str, prefix: &str) -> Option<&'a str
 pub(super) fn try_path_alias_fallback(
     ctx: &ResolveContext<'_>,
     specifier: &str,
+    style_context: bool,
 ) -> Option<ResolveResult> {
     for (prefix, replacement) in ctx.path_aliases {
         let Some(remainder) = alias_match_remainder(specifier, prefix) else {
@@ -49,8 +50,12 @@ pub(super) fn try_path_alias_fallback(
             (false, false) => format!("./{replacement}/{remainder}"),
         };
 
-        super::work::note_oxc_resolve();
-        if let Ok(resolved) = ctx.resolver.resolve(ctx.root, &substituted) {
+        if let Ok(resolved) = super::specifier::resolve_with_extension_policy(
+            ctx,
+            ctx.root,
+            &substituted,
+            style_context,
+        ) {
             let resolved_path = resolved.path();
             if let Some(&file_id) = ctx.raw_path_to_id.get(resolved_path) {
                 return Some(ResolveResult::InternalModule(file_id));
@@ -1111,6 +1116,7 @@ pub(super) fn try_pnpm_workspace_fallback(
 pub(super) fn try_workspace_package_fallback(
     ctx: &ResolveContext<'_>,
     specifier: &str,
+    style_context: bool,
 ) -> Option<ResolveResult> {
     if !super::path_info::is_bare_specifier(specifier) {
         return None;
@@ -1136,7 +1142,7 @@ pub(super) fn try_workspace_package_fallback(
             *ctx.workspace_roots.get(pkg_name.as_str())?
         };
 
-    resolve_workspace_self_reference(ctx, ws_root, subpath, pkg_name)
+    resolve_workspace_self_reference(ctx, ws_root, subpath, pkg_name, style_context)
 }
 
 /// Outcome of attempting workspace resolution through a matching package
@@ -1244,16 +1250,27 @@ fn resolve_workspace_self_reference(
     ws_root: &Path,
     subpath: &str,
     package_name: String,
+    style_context: bool,
 ) -> Option<ResolveResult> {
-    let root_file = ws_root.join("__fallow_ws_self_resolve__");
     let rel_spec = if subpath.is_empty() {
         "./".to_string()
     } else {
         format!("./{subpath}")
     };
 
-    super::work::note_oxc_resolve();
-    let resolved = ctx.resolver.resolve_file(&root_file, &rel_spec).ok()?;
+    let root_file = ws_root.join("__fallow_ws_self_resolve__");
+    let super::specifier::ResolveFileAttempt::Resolved {
+        resolution: resolved,
+        ..
+    } = super::specifier::resolve_file_with_tsconfig_fallback(
+        ctx,
+        &root_file,
+        &rel_spec,
+        style_context,
+    )
+    else {
+        return None;
+    };
     let resolved_path = resolved.path();
 
     if let Some(&file_id) = ctx.raw_path_to_id.get(resolved_path) {
@@ -1333,8 +1350,10 @@ mod tests {
         let tsconfig_warned = std::sync::Mutex::new(FxHashSet::default());
         let tsconfig_cache = TsconfigCache::default();
         let canonicalize_cache = CanonicalizeCache::default();
+        let script_resolver = crate::resolve::specifier::create_script_resolver(&resolver);
         let ctx = ResolveContext {
             resolver: &resolver,
+            script_resolver: &script_resolver,
             style_resolver: &resolver,
             extensions: &[],
             path_to_id: &path_to_id,
@@ -2967,8 +2986,10 @@ mod tests {
         let tsconfig_cache = TsconfigCache::default();
         let canonicalize_cache = CanonicalizeCache::default();
         let root = PathBuf::from("/project");
+        let script_resolver = crate::resolve::specifier::create_script_resolver(&resolver);
         let ctx = ResolveContext {
             resolver: &resolver,
+            script_resolver: &script_resolver,
             style_resolver: &resolver,
             extensions: &[],
             path_to_id: &path_to_id,
@@ -3038,7 +3059,7 @@ mod tests {
         let root = PathBuf::from("/project");
         let pj = fallow_config::PackageJson::default();
         with_package_map_ctx(root, None, pj, &[], |ctx, _manifest, _r| {
-            let result = try_workspace_package_fallback(ctx, "./local/module");
+            let result = try_workspace_package_fallback(ctx, "./local/module", false);
             assert!(
                 result.is_none(),
                 "relative specifier should return None from workspace fallback"
@@ -3052,7 +3073,7 @@ mod tests {
         let root = PathBuf::from("/project");
         let pj = fallow_config::PackageJson::default();
         with_package_map_ctx(root, None, pj, &[], |ctx, _manifest, _r| {
-            let result = try_workspace_package_fallback(ctx, "/absolute/path");
+            let result = try_workspace_package_fallback(ctx, "/absolute/path", false);
             assert!(
                 result.is_none(),
                 "absolute path should return None from workspace fallback"

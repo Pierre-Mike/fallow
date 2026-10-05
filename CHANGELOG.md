@@ -159,6 +159,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Script directory imports no longer resolve to a sibling stylesheet or
+  component.** An import of `./Button` now reaches `Button/index.ts` before
+  an inferred `Button.css` or `Button.vue`. The same rule applies to aliases,
+  import maps and workspace package paths. Explicit asset targets, JSON
+  modules and stylesheet resolution keep their existing behavior. Cached
+  resolution graphs are rebuilt on upgrade. Thanks to
+  [@osazemeu](https://github.com/osazemeu) for the report and initial fix
+  ([#3201](https://github.com/fallow-rs/fallow/issues/3201),
+  [#3202](https://github.com/fallow-rs/fallow/pull/3202)).
+
 - **An orphan module declaration file is now reported as an unused file.**
   Before, fallow made every `.d.ts`, `.d.mts` and `.d.cts` file an entry
   point and never reported one, so a stale declaration file and every module

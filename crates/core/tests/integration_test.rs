@@ -45,6 +45,8 @@ mod deno_workspace;
 mod dependencies;
 #[path = "integration_test/deprecated_exports.rs"]
 mod deprecated_exports;
+#[path = "integration_test/directory_resolution.rs"]
+mod directory_resolution;
 #[path = "integration_test/duplicate_prop_shape.rs"]
 mod duplicate_prop_shape;
 #[path = "integration_test/dynamic_import_then.rs"]

@@ -377,6 +377,9 @@ impl ResolvedModule {
 pub(super) struct ResolveContext<'a> {
     /// The oxc_resolver instance (configured once, shared across threads).
     pub resolver: &'a Resolver,
+    /// Script and JSON extension inference, with explicit asset targets intact.
+    /// Shares the broad resolver's filesystem and PnP cache.
+    pub script_resolver: &'a Resolver,
     /// CSS-only resolver with package.json `sass` and `style` conditions enabled.
     /// Used only for stylesheet package subpaths so JS/TS imports do not
     /// accidentally prefer CSS export branches.

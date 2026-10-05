@@ -83,8 +83,15 @@ fn eslint_relative_extends_config_is_not_reported_unused() {
 
 #[test]
 fn extensionless_import_prefers_directory_index_over_non_module_sibling() {
-    for (index, sibling) in ["tsx", "ts", "js", "jsx"].into_iter().flat_map(|index| {
-        ["css", "scss", "json", "vue", "graphql"].map(move |sibling| (index, sibling))
+    for (index, sibling) in [
+        "tsx", "ts", "js", "jsx", "mts", "cts", "mjs", "cjs", "gts", "gjs",
+    ]
+    .into_iter()
+    .flat_map(|index| {
+        [
+            "css", "scss", "vue", "svelte", "astro", "mdx", "graphql", "gql",
+        ]
+        .map(move |sibling| (index, sibling))
     }) {
         let dir = tempfile::tempdir().expect("temp dir");
         let root = dir.path();
