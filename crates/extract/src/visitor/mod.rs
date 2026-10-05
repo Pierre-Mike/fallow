@@ -3014,6 +3014,10 @@ impl ModuleInfoExtractor {
         }
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "flat field projection preserves the complete extracted module contract"
+    )]
     pub(crate) fn into_module_info(
         mut self,
         file_id: fallow_types::discover::FileId,

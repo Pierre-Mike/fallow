@@ -477,6 +477,10 @@ fn cached_opt_to_arc<T: Clone>(cached: Option<&[T]>) -> Arc<[T]> {
 /// `Vec<FunctionComplexity>` clone on warm runs of commands (e.g. `fallow dead-code`)
 /// that don't consume complexity, which adds up across tens of thousands of files.
 #[must_use]
+#[expect(
+    clippy::too_many_lines,
+    reason = "flat field projection preserves the complete extraction cache contract"
+)]
 pub fn cached_to_module_opts(
     cached: &CachedModule,
     file_id: fallow_types::discover::FileId,
@@ -595,10 +599,6 @@ pub fn cached_to_module_opts(
 /// comes from `std::fs::metadata()` at parse time and enables fast cache
 /// validation on subsequent runs.
 #[must_use]
-#[expect(
-    clippy::too_many_lines,
-    reason = "flat field projection preserves the complete extraction cache contract"
-)]
 pub fn module_to_cached(
     module: &crate::ModuleInfo,
     fingerprint: fallow_types::source_fingerprint::SourceFingerprint,
@@ -612,6 +612,10 @@ pub fn module_to_cached(
     cached
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "flat field projection preserves the complete extraction cache contract"
+)]
 fn module_to_cached_payload(module: &crate::ModuleInfo) -> CachedModule {
     CachedModule {
         content_hash: module.content_hash,

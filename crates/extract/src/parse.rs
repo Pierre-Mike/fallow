@@ -1281,8 +1281,10 @@ pub fn compute_semantic_usage_for_extractor(
         &extractor.exports,
         &require_namespace_bindings,
         template_used,
-        &computed_enum_key_spans,
-        &imported_call_candidates,
+        SemanticReferenceCandidates {
+            module_bindings: &computed_enum_key_spans,
+            imported_calls: &imported_call_candidates,
+        },
     );
     extractor.resolve_computed_enum_key_uses(&semantic_usage.module_binding_reference_spans);
     extractor.resolve_imported_call_sites(&semantic_usage.imported_call_reference_spans);
@@ -1328,14 +1330,19 @@ fn report_unreferenced_import_equals_bindings(
     unused.dedup();
 }
 
+#[derive(Clone, Copy)]
+struct SemanticReferenceCandidates<'a> {
+    module_bindings: &'a rustc_hash::FxHashSet<Span>,
+    imported_calls: &'a rustc_hash::FxHashSet<Span>,
+}
+
 fn compute_semantic_usage_with_candidates(
     program: &Program<'_>,
     imports: &[ImportInfo],
     exports: &[ExportInfo],
     require_namespace_bindings: &[String],
     template_used: &rustc_hash::FxHashSet<String>,
-    module_binding_candidates: &rustc_hash::FxHashSet<Span>,
-    imported_call_candidates: &rustc_hash::FxHashSet<Span>,
+    candidates: SemanticReferenceCandidates<'_>,
 ) -> SemanticUsage {
     use oxc_semantic::SemanticBuilder;
     use rustc_hash::FxHashSet;
@@ -1390,7 +1397,7 @@ fn compute_semantic_usage_with_candidates(
     let mock_api_reference_spans = compute_mock_api_reference_spans(&semantic, imports, root_scope);
     let declaration_merges = declaration_merge_facts(&semantic);
     let mut module_binding_reference_spans = FxHashSet::default();
-    if !module_binding_candidates.is_empty() {
+    if !candidates.module_bindings.is_empty() {
         for symbol_id in scoping.symbol_ids() {
             if scoping.symbol_scope_id(symbol_id) != root_scope {
                 continue;
@@ -1404,7 +1411,8 @@ fn compute_semantic_usage_with_candidates(
                         else {
                             return None;
                         };
-                        module_binding_candidates
+                        candidates
+                            .module_bindings
                             .contains(&identifier.span)
                             .then_some(identifier.span)
                     }),
@@ -1425,7 +1433,7 @@ fn compute_semantic_usage_with_candidates(
         imported_call_reference_spans: imported_call_reference_spans(
             &semantic,
             imports,
-            imported_call_candidates,
+            candidates.imported_calls,
         ),
         unreferenced_import_equals_bindings: import_equals.unreferenced,
         component_contracts: crate::component_contracts::collect(&semantic, imports, exports),
@@ -1797,8 +1805,10 @@ pub fn compute_import_binding_usage(
         &[],
         import_equals_bindings,
         template_used,
-        &rustc_hash::FxHashSet::default(),
-        &rustc_hash::FxHashSet::default(),
+        SemanticReferenceCandidates {
+            module_bindings: &rustc_hash::FxHashSet::default(),
+            imported_calls: &rustc_hash::FxHashSet::default(),
+        },
     );
     // The exported form is exempt, exactly as it is on the extractor path, but
     // `export import X = require('./x')` is not a `<script setup>` spelling: no
