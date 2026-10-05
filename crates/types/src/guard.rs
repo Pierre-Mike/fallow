@@ -68,6 +68,12 @@ pub struct GuardPolicyRule {
     pub kind: String,
     /// Matcher patterns for the rule, such as callees, import specifiers, or effects.
     pub patterns: Vec<String>,
+    /// Producer locations permitted by a gdp-ts proof rule.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub allowed_files: Vec<String>,
+    /// Exact proof labels restricted by a gdp-ts proof rule; empty means all.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub proof_kinds: Vec<String>,
     /// Optional rule-authored remediation message.
     pub message: Option<String>,
     /// Effective severity for this rule at the target path.
@@ -110,6 +116,8 @@ mod tests {
                     rule_id: "pure-domain".to_string(),
                     kind: "banned-effect".to_string(),
                     patterns: vec!["network".to_string()],
+                    allowed_files: vec![],
+                    proof_kinds: vec![],
                     message: Some("Inject effects via ports.".to_string()),
                     severity: "warn".to_string(),
                     suppress_token: "policy-violation:team-policy/pure-domain".to_string(),

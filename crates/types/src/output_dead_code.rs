@@ -1210,21 +1210,27 @@ impl PolicyViolationFinding {
             crate::results::PolicyRuleKind::BannedImport => "import",
             crate::results::PolicyRuleKind::BannedEffect => "effect",
             crate::results::PolicyRuleKind::BannedExport => "export",
+            crate::results::PolicyRuleKind::GdpProofProducer => "proof producer",
         };
         let description = match &violation.message {
             Some(message) => format!("Replace the `{}` {what}: {message}", violation.matched),
             None => format!("Replace the `{}` {what}", violation.matched),
         };
         let suppress_token = format!("policy-violation:{}/{}", violation.pack, violation.rule_id);
+        let note = if violation.kind == crate::results::PolicyRuleKind::GdpProofProducer {
+            "This check resolves the gdp-ts factory through static imports and unambiguous re-exports. Move proof creation to an allowed module. It does not verify authorization logic or follow arbitrary wrappers.".to_owned()
+        } else {
+            format!(
+                "Rule `{}/{}` from the configured rule packs bans this {what}. The check is syntactic: it does not follow aliased or re-bound callees, and import matching uses the raw specifier",
+                violation.pack, violation.rule_id,
+            )
+        };
         let actions = vec![
             IssueAction::Fix(FixAction {
                 kind: FixActionType::ResolvePolicyViolation,
                 auto_fixable: false,
                 description,
-                note: Some(format!(
-                    "Rule `{}/{}` from the configured rule packs bans this {what}. The check is syntactic: it does not follow aliased or re-bound callees, and import matching uses the raw specifier",
-                    violation.pack, violation.rule_id,
-                )),
+                note: Some(note),
                 available_in_catalogs: None,
                 suggested_target: None,
             }),

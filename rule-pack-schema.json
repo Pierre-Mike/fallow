@@ -37,7 +37,7 @@
   ],
   "$defs": {
     "RulePackRule": {
-      "description": "One declarative policy rule inside a rule pack.\n\n`callees` applies only to `banned-call` rules; `specifiers` and\n`ignoreTypeOnly` apply only to `banned-import` rules; `effects` applies\nonly to `banned-effect` rules; `exports` applies only to `banned-export`\nrules. `zones` can scope any rule kind to files classified into one of the\nnamed boundary zones. Setting a field on the wrong kind is a load error\n(fail loud, never silently ignore policy).",
+      "description": "One declarative policy rule inside a rule pack.\n\n`callees` applies only to `banned-call` rules; `specifiers` and\n`ignoreTypeOnly` apply only to `banned-import` rules; `effects` applies\nonly to `banned-effect` rules; `exports` applies only to `banned-export`\nrules. `allowedFiles` and `proofKinds` apply only to `gdp-proof-producer`\nrules. `zones` can scope any rule kind to files classified into one of the\nnamed boundary zones. Setting a field on the wrong kind is a load error\n(fail loud, never silently ignore policy).",
       "type": "object",
       "properties": {
         "id": {
@@ -71,6 +71,20 @@
         },
         "exports": {
           "description": "Export names to ban (`banned-export` only). `\"default\"` matches the\ndefault export; any other entry matches an exported name exactly; a\nsingle trailing `*` makes it a prefix match (`internal*`). No other\nglob syntax is supported. Re-exports are out of scope for this rule.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "allowedFiles": {
+          "description": "Project-root-relative globs allowed to call `@gdp-ts/core.defineProof`\n(`gdp-proof-producer` only). At least one pattern is required.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "proofKinds": {
+          "description": "Exact literal proof labels checked by a `gdp-proof-producer` rule.\nEmpty or absent checks every recognized factory call, including calls\nwith dynamic labels. A nonempty list checks only static string labels.",
           "type": "array",
           "items": {
             "type": "string"
@@ -148,6 +162,11 @@
           "description": "Ban exported names that match one of `exports`.",
           "type": "string",
           "const": "banned-export"
+        },
+        {
+          "description": "Restrict gdp-ts proof factory calls to explicitly allowed modules.",
+          "type": "string",
+          "const": "gdp-proof-producer"
         }
       ]
     },

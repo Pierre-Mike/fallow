@@ -77,6 +77,7 @@ mod release_publish_list;
 mod report_from_levels_tests;
 mod report_parity_tests;
 mod request_outcome_tests;
+mod rule_pack_gdp_tests;
 mod rule_pack_tests;
 mod schema_conformance;
 mod schema_tests;

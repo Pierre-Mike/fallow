@@ -284,6 +284,8 @@ fn guard_policy_rule(
         rule_id: rule.id.clone(),
         kind: rule_kind(rule.kind).to_string(),
         patterns: rule_patterns(rule),
+        allowed_files: rule.allowed_files.clone(),
+        proof_kinds: rule.proof_kinds.clone(),
         message: rule.message.clone(),
         severity: severity.to_string(),
         suppress_token: format!("policy-violation:{pack}/{}", rule.id),
@@ -296,6 +298,7 @@ const fn rule_kind(kind: RulePackRuleKind) -> &'static str {
         RulePackRuleKind::BannedImport => "banned-import",
         RulePackRuleKind::BannedEffect => "banned-effect",
         RulePackRuleKind::BannedExport => "banned-export",
+        RulePackRuleKind::GdpProofProducer => "gdp-proof-producer",
     }
 }
 
@@ -309,6 +312,7 @@ fn rule_patterns(rule: &RulePackRule) -> Vec<String> {
             .map(|effect| effect.as_str().to_string())
             .collect(),
         RulePackRuleKind::BannedExport => rule.exports.clone(),
+        RulePackRuleKind::GdpProofProducer => vec!["@gdp-ts/core.defineProof".to_string()],
     }
 }
 
@@ -330,6 +334,8 @@ mod tests {
             specifiers: Vec::new(),
             effects: Vec::new(),
             exports: Vec::new(),
+            allowed_files: Vec::new(),
+            proof_kinds: Vec::new(),
             ignore_type_only: false,
             files: Vec::new(),
             exclude: Vec::new(),

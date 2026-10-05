@@ -17,6 +17,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Review defaults and API intent manually; static analysis does not prove
   runtime unreachability, and the candidate has no automatic fix.
 
+- **Graph-backed gdp-ts proof producer rules.** The opt-in
+  `gdp-proof-producer` rule-pack kind restricts `@gdp-ts/core.defineProof`
+  calls to `allowedFiles`. Add `proofKinds` to assign literal proof labels
+  to specific owner modules. Analysis follows static imports and unambiguous
+  re-export chains and checks every analyzed file, including unused files.
+  Dynamic labels are checked by broad producer rules; kind-specific rules
+  check only literal strings. This complements the gdp-ts lint preset and
+  does not verify authorization logic. The parse cache version changes
+  because extraction now retains scope-resolved imported call sites. The
+  graph cache version changes so warm upgrades retain verified package identity
+  for self-references. The dead-code, audit, review-brief, and combined schema
+  versions advance because the required policy rule kind enum gains a value.
+
 - **`fallow report --from <file> --format markdown` renders a saved run as
   markdown.** Before, `report` refused the markdown format. Now a saved
   `dead-code`, `dupes`, `health` or bare combined envelope renders the same

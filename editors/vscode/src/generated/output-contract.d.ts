@@ -112,7 +112,7 @@ kind: "similar-code-review"
 /**
  * Schema projection for the audit envelope's exact version.
  */
-export type AuditSchemaVersion = 11
+export type AuditSchemaVersion = 12
 /**
  * Fallow CLI version that produced this envelope. Renders to the JSON wire as
  * a bare string (e.g. `"2.74.0"`).
@@ -204,7 +204,7 @@ export type TypeAwareAbstentionReason = ("no-project" | "ambiguous-project" | "b
 /**
  * Schema projection for the dead-code envelope's exact version.
  */
-export type CheckSchemaVersion = 9
+export type CheckSchemaVersion = 10
 /**
  * A suggested action attached to a finding in the JSON output. Each finding
  * carries an `actions` array; consumers (agents, IDE clients, CI bots) can
@@ -380,7 +380,7 @@ export type ReExportCycleKind = ("multi-node" | "self-loop")
 /**
  * Which rule-pack rule kind produced a [`PolicyViolation`].
  */
-export type PolicyRuleKind = ("banned-call" | "banned-import" | "banned-effect" | "banned-export")
+export type PolicyRuleKind = ("banned-call" | "banned-import" | "banned-effect" | "banned-export" | "gdp-proof-producer")
 /**
  * Effective severity of a single [`PolicyViolation`]. Per-rule `severity`
  * overrides the `rules."policy-violation"` master; `off` rules emit nothing,
@@ -1352,7 +1352,7 @@ export type SecurityBlindSpotsSchemaVersion = "1"
 /**
  * Schema projection for the combined envelope's exact version.
  */
-export type CombinedSchemaVersion = 12
+export type CombinedSchemaVersion = 13
 /**
  * Schema projection for the feature-flags envelope's exact version.
  */
@@ -1397,7 +1397,7 @@ export type VendorFlagState = ("on" | "off" | "rolled_out" | "archived" | "exper
  * Independently-versioned wire-version newtype for the brief envelope.
  * Serializes as the integer `REVIEW_BRIEF_SCHEMA_VERSION`.
  */
-export type ReviewBriefSchemaVersion = 11
+export type ReviewBriefSchemaVersion = 12
 /**
  * The exactly-three shippable decision categories (the SOLID-3). No cut category
  * (abstraction / deletion / convention / irreversibility) is representable: this
@@ -5090,7 +5090,8 @@ kind: PolicyRuleKind
  * What matched: the written callee path for `banned-call` (e.g.
  * `cp.exec`), the raw import specifier for `banned-import` (e.g.
  * `moment/locale/nl`), `<effect>: <callee>` for `banned-effect`, or the
- * exported name for `banned-export`.
+ * exported name for `banned-export`. For `gdp-proof-producer`, the canonical
+ * factory with its JSON-quoted literal label or `...` for a dynamic label.
  */
 matched: string
 severity: PolicyViolationSeverity

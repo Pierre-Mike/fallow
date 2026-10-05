@@ -1,3 +1,5 @@
+mod gdp;
+
 use rustc_hash::FxHashMap;
 use rustc_hash::FxHashSet;
 
@@ -7,6 +9,7 @@ use fallow_types::results::{PolicyRuleKind, PolicyViolation, PolicyViolationSeve
 
 use crate::discover::FileId;
 use crate::graph::ModuleGraph;
+use crate::resolve::ResolvedModule;
 use crate::suppress::SuppressionContext;
 
 use super::boundary_calls::canonical_callee_path;
@@ -25,6 +28,7 @@ struct CompiledRule<'a> {
     zones: FxHashSet<String>,
     files: Vec<globset::GlobMatcher>,
     exclude: Vec<globset::GlobMatcher>,
+    allowed_files: Vec<globset::GlobMatcher>,
 }
 
 impl CompiledRule<'_> {
@@ -89,9 +93,21 @@ fn compiled_scope_applies(
         && (zones.is_empty() || zone.is_some_and(|zone| zones.contains(zone)))
 }
 
-/// Detect banned calls, imports, and catalogue-derived effects declared by the
-/// configured rule packs (`rulePacks`), reporting one `policy-violation`
-/// finding per match.
+/// Shared graph, extraction, configuration, and source context for policy analysis.
+#[derive(Clone, Copy)]
+pub(super) struct PolicyAnalysisInput<'a> {
+    pub(super) graph: &'a ModuleGraph,
+    pub(super) modules: &'a [ModuleInfo],
+    pub(super) resolved_modules: &'a [ResolvedModule],
+    pub(super) config: &'a ResolvedConfig,
+    pub(super) declared_deps: &'a FxHashSet<String>,
+    pub(super) suppressions: &'a SuppressionContext<'a>,
+    pub(super) line_offsets_by_file: &'a LineOffsetsMap<'a>,
+}
+
+/// Detect banned calls, imports, catalogue-derived effects, and proof producer
+/// ownership declared by the configured rule packs (`rulePacks`), reporting one
+/// `policy-violation` finding per match.
 ///
 /// Severity model: each file's master severity is
 /// `resolve_rules_for_path(...).policy_violation` (so per-file `overrides`
@@ -114,15 +130,19 @@ fn compiled_scope_applies(
 /// boundary forbidden-call behavior). `banned-effect` follows the same first
 /// applicable rule policy over catalogue-derived effects. Every
 /// `banned-import` rule that matches a specifier emits its own finding, because
-/// each rule carries its own message and severity.
-pub fn find_policy_violations(
-    graph: &ModuleGraph,
-    modules: &[ModuleInfo],
-    config: &ResolvedConfig,
-    declared_deps: &FxHashSet<String>,
-    suppressions: &SuppressionContext<'_>,
-    line_offsets_by_file: &LineOffsetsMap<'_>,
-) -> Vec<PolicyViolation> {
+/// each rule carries its own message and severity. Proof-producer rules likewise
+/// report independently at every admitted factory call, including unreachable
+/// analyzed modules, and follow only unambiguous ESM symbol provenance.
+pub(super) fn find_policy_violations(input: PolicyAnalysisInput<'_>) -> Vec<PolicyViolation> {
+    let PolicyAnalysisInput {
+        graph,
+        modules,
+        resolved_modules,
+        config,
+        declared_deps,
+        suppressions,
+        line_offsets_by_file,
+    } = input;
     if config.rule_packs.is_empty() {
         return Vec::new();
     }
@@ -141,6 +161,14 @@ pub fn find_policy_violations(
     let mut scoped_file_counts: Vec<usize> = vec![0; rules.len()];
     let mut zones_by_file: FxHashMap<FileId, Option<&str>> = FxHashMap::default();
 
+    let producer_rules_enabled = rules
+        .iter()
+        .any(|rule| rule.rule.kind == RulePackRuleKind::GdpProofProducer);
+    let mut origins = gdp::ProofOrigins::new(if producer_rules_enabled {
+        resolved_modules
+    } else {
+        &[]
+    });
     let mut violations = Vec::new();
     for node in &graph.modules {
         let zone = *zones_by_file.entry(node.file_id).or_insert_with(|| {
@@ -149,18 +177,21 @@ pub fn find_policy_violations(
                 config.boundaries.classify_zone(&relative)
             })
         });
-        collect_node_policy_violations(&mut PolicyNodeInput {
-            node,
-            config,
-            rules: &rules,
-            zone,
-            modules_by_id: &modules_by_id,
-            declared_deps,
-            suppressions,
-            line_offsets_by_file,
-            scoped_file_counts: &mut scoped_file_counts,
-            violations: &mut violations,
-        });
+        collect_node_policy_violations(
+            &mut PolicyNodeInput {
+                node,
+                config,
+                rules: &rules,
+                zone,
+                modules_by_id: &modules_by_id,
+                declared_deps,
+                suppressions,
+                line_offsets_by_file,
+                scoped_file_counts: &mut scoped_file_counts,
+                violations: &mut violations,
+            },
+            &mut origins,
+        );
     }
 
     for (index, rule) in rules.iter().enumerate() {
@@ -192,10 +223,13 @@ struct PolicyNodeInput<'a> {
     violations: &'a mut Vec<PolicyViolation>,
 }
 
-/// Evaluate every banned-import / banned-effect / banned-call rule against one
-/// reachable-or-entry module, bumping per-rule scope counts and appending
-/// findings. Off-master and out-of-scope nodes are skipped.
-fn collect_node_policy_violations(input: &mut PolicyNodeInput<'_>) {
+/// Evaluate applicable rules for one analyzed module, bumping scope counts and
+/// appending findings. Only proof-producer rules apply to unreachable modules;
+/// off-master and out-of-scope nodes remain skipped.
+fn collect_node_policy_violations(
+    input: &mut PolicyNodeInput<'_>,
+    origins: &mut gdp::ProofOrigins<'_>,
+) {
     let node = input.node;
     let Some(scope) = scoped_policy_rules(
         node,
@@ -211,6 +245,20 @@ fn collect_node_policy_violations(input: &mut PolicyNodeInput<'_>) {
         return;
     };
 
+    gdp::collect_producer_violations(
+        &mut PolicyCollectionInput {
+            in_scope: &scope.in_scope,
+            module,
+            node,
+            master: scope.master,
+            declared_deps: input.declared_deps,
+            suppressions: input.suppressions,
+            line_offsets_by_file: input.line_offsets_by_file,
+            violations: input.violations,
+        },
+        origins,
+        &input.config.root,
+    );
     collect_banned_imports(&mut PolicyCollectionInput {
         in_scope: &scope.in_scope,
         module,
@@ -265,9 +313,6 @@ fn scoped_policy_rules<'a>(
     zone: Option<&str>,
     scoped_file_counts: &mut [usize],
 ) -> Option<ScopedPolicyRules<'a>> {
-    if !node.is_reachable() && !node.is_entry_point() {
-        return None;
-    }
     let Ok(relative) = node.path.strip_prefix(&config.root) else {
         return None;
     };
@@ -281,7 +326,12 @@ fn scoped_policy_rules<'a>(
     let in_scope: Vec<(usize, &CompiledRule<'_>)> = rules
         .iter()
         .enumerate()
-        .filter(|(_, rule)| rule.applies_to(&relative, zone))
+        .filter(|(_, rule)| {
+            (node.is_reachable()
+                || node.is_entry_point()
+                || rule.rule.kind == RulePackRuleKind::GdpProofProducer)
+                && rule.applies_to(&relative, zone)
+        })
         .collect();
     if in_scope.is_empty() {
         return None;
@@ -319,6 +369,7 @@ fn compile_rules(config: &ResolvedConfig) -> Vec<CompiledRule<'_>> {
                 zones,
                 files: compile_scope_globs(&rule.files),
                 exclude: compile_scope_globs(&rule.exclude),
+                allowed_files: compile_scope_globs(&rule.allowed_files),
             });
         }
     }

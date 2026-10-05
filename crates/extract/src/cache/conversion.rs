@@ -543,6 +543,7 @@ pub fn cached_to_module_opts(
         sanitized_sink_args: cached.sanitized_sink_args.clone(),
         security_control_sites: cached.security_control_sites.clone(),
         callee_uses: cached.callee_uses.clone(),
+        imported_call_sites: cached.imported_call_sites.clone().into(),
         misplaced_directives: cached.misplaced_directives.clone(),
         inline_server_action_exports: cached.inline_server_action_exports.clone(),
         di_key_sites: cached.di_key_sites.clone(),
@@ -594,6 +595,10 @@ pub fn cached_to_module_opts(
 /// comes from `std::fs::metadata()` at parse time and enables fast cache
 /// validation on subsequent runs.
 #[must_use]
+#[expect(
+    clippy::too_many_lines,
+    reason = "flat field projection preserves the complete extraction cache contract"
+)]
 pub fn module_to_cached(
     module: &crate::ModuleInfo,
     fingerprint: fallow_types::source_fingerprint::SourceFingerprint,
@@ -672,6 +677,7 @@ fn module_to_cached_payload(module: &crate::ModuleInfo) -> CachedModule {
         sanitized_sink_args: module.sanitized_sink_args.clone(),
         security_control_sites: module.security_control_sites.clone(),
         callee_uses: module.callee_uses.clone(),
+        imported_call_sites: module.imported_call_sites.to_vec(),
         misplaced_directives: module.misplaced_directives.clone(),
         inline_server_action_exports: module.inline_server_action_exports.clone(),
         di_key_sites: module.di_key_sites.clone(),

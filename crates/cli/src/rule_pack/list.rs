@@ -41,7 +41,7 @@ fn emit_json(config: &ResolvedConfig, json_style: crate::json_style::JsonStyle) 
                     "source": config.rule_pack_sources.get(index).map(|path| path_to_string(path)),
                     "description": pack.description,
                     "rules": pack.rules.iter().map(|rule| {
-                        json!({
+                        let mut output = json!({
                             "id": rule.id,
                             "kind": rule_kind(rule.kind),
                             "severity": effective_severity(rule, config.rules.policy_violation).to_string(),
@@ -49,7 +49,12 @@ fn emit_json(config: &ResolvedConfig, json_style: crate::json_style::JsonStyle) 
                             "files": rule.files,
                             "exclude": rule.exclude,
                             "message": rule.message,
-                        })
+                        });
+                        if rule.kind == RulePackRuleKind::GdpProofProducer {
+                            output["allowedFiles"] = json!(rule.allowed_files);
+                            output["proofKinds"] = json!(rule.proof_kinds);
+                        }
+                        output
                     }).collect::<Vec<_>>(),
                 })
             }).collect::<Vec<_>>(),
@@ -98,6 +103,17 @@ fn emit_human(config: &ResolvedConfig) -> ExitCode {
             if let Some(message) = &rule.message {
                 println!("    {message}");
             }
+            if rule.kind == RulePackRuleKind::GdpProofProducer {
+                println!("    Allowed producers: {}", rule.allowed_files.join(", "));
+                println!(
+                    "    Proof kinds: {}",
+                    if rule.proof_kinds.is_empty() {
+                        "all, including dynamic labels".to_owned()
+                    } else {
+                        rule.proof_kinds.join(", ")
+                    }
+                );
+            }
         }
     }
 
@@ -114,6 +130,7 @@ fn rule_kind(kind: RulePackRuleKind) -> &'static str {
         RulePackRuleKind::BannedImport => "banned-import",
         RulePackRuleKind::BannedEffect => "banned-effect",
         RulePackRuleKind::BannedExport => "banned-export",
+        RulePackRuleKind::GdpProofProducer => "gdp-proof-producer",
     }
 }
 
@@ -127,6 +144,7 @@ fn rule_patterns(rule: &RulePackRule) -> Vec<String> {
             .map(|effect| effect.as_str().to_string())
             .collect(),
         RulePackRuleKind::BannedExport => rule.exports.clone(),
+        RulePackRuleKind::GdpProofProducer => vec!["@gdp-ts/core.defineProof".to_string()],
     }
 }
 

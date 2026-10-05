@@ -16,7 +16,9 @@ use crate::graph::ModuleGraph;
 use crate::resolve::ResolvedModule;
 use crate::suppress::SuppressionContext;
 
-use super::{compile_rules, find_policy_violations as find_policy_violations_raw};
+use super::{
+    PolicyAnalysisInput, compile_rules, find_policy_violations as find_policy_violations_raw,
+};
 
 fn rule(id: &str, kind: RulePackRuleKind) -> RulePackRule {
     RulePackRule {
@@ -26,6 +28,8 @@ fn rule(id: &str, kind: RulePackRuleKind) -> RulePackRule {
         specifiers: Vec::new(),
         effects: Vec::new(),
         exports: Vec::new(),
+        allowed_files: Vec::new(),
+        proof_kinds: Vec::new(),
         ignore_type_only: false,
         files: Vec::new(),
         exclude: Vec::new(),
@@ -269,14 +273,15 @@ fn find_policy_violations(
     suppressions: &SuppressionContext<'_>,
     line_offsets_by_file: &super::super::LineOffsetsMap<'_>,
 ) -> Vec<fallow_types::results::PolicyViolation> {
-    find_policy_violations_raw(
+    find_policy_violations_raw(PolicyAnalysisInput {
         graph,
         modules,
+        resolved_modules: &[],
         config,
-        &FxHashSet::default(),
+        declared_deps: &FxHashSet::default(),
         suppressions,
         line_offsets_by_file,
-    )
+    })
 }
 
 #[test]
@@ -424,25 +429,27 @@ fn banned_effect_honors_catalogue_enabler() {
     let suppressions = SuppressionContext::empty();
     let line_offsets = FxHashMap::default();
 
-    let without_electron = find_policy_violations_raw(
-        &graph,
-        &modules,
-        &config,
-        &FxHashSet::default(),
-        &suppressions,
-        &line_offsets,
-    );
+    let without_electron = find_policy_violations_raw(PolicyAnalysisInput {
+        graph: &graph,
+        modules: &modules,
+        resolved_modules: &[],
+        config: &config,
+        declared_deps: &FxHashSet::default(),
+        suppressions: &suppressions,
+        line_offsets_by_file: &line_offsets,
+    });
     assert!(without_electron.is_empty());
 
     let declared_deps = FxHashSet::from_iter(["electron".to_string()]);
-    let with_electron = find_policy_violations_raw(
-        &graph,
-        &modules,
-        &config,
-        &declared_deps,
-        &suppressions,
-        &line_offsets,
-    );
+    let with_electron = find_policy_violations_raw(PolicyAnalysisInput {
+        graph: &graph,
+        modules: &modules,
+        resolved_modules: &[],
+        config: &config,
+        declared_deps: &declared_deps,
+        suppressions: &suppressions,
+        line_offsets_by_file: &line_offsets,
+    });
     assert_eq!(with_electron.len(), 1);
     assert_eq!(with_electron[0].matched, "dom: BrowserWindow");
 }

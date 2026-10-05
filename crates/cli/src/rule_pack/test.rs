@@ -51,7 +51,12 @@ fn analyze_rule_pack(
     let analysis = fallow_engine::session::AnalysisSession::from_resolved_config(config.clone())
         .and_then(|session| session.analyze_dead_code())
         .map_err(|error| crate::error::emit_error(error.message(), 2, output))?;
-    let findings = analysis.results.policy_violations;
+    let mut findings = analysis.results.policy_violations;
+    for finding in &mut findings {
+        if let Ok(relative) = finding.violation.path.strip_prefix(&config.root) {
+            finding.violation.path = relative.to_path_buf();
+        }
+    }
     let summaries = build_rule_summaries(config, &findings);
     Ok((summaries, findings))
 }
@@ -264,6 +269,7 @@ fn rule_kind(kind: RulePackRuleKind) -> &'static str {
         RulePackRuleKind::BannedImport => "banned-import",
         RulePackRuleKind::BannedEffect => "banned-effect",
         RulePackRuleKind::BannedExport => "banned-export",
+        RulePackRuleKind::GdpProofProducer => "gdp-proof-producer",
     }
 }
 

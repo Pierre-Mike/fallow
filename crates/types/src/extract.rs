@@ -190,6 +190,8 @@ pub struct ModuleInfo {
     /// extraction is config-blind; the per-module cost is bounded by the
     /// unique-callee count.
     pub callee_uses: Vec<CalleeUse>,
+    /// Per-call references to actual runtime ESM import bindings.
+    pub imported_call_sites: Arc<[ImportedCallSite]>,
     /// `"use client"` / `"use server"` directive strings written as expression
     /// statements in `program.body` (misplaced, NOT in the leading
     /// prologue), so the RSC bundler silently ignores them. One entry per
@@ -461,6 +463,7 @@ impl ModuleInfo {
             sanitized_sink_args: Vec::new(),
             security_control_sites: Vec::new(),
             callee_uses: Vec::new(),
+            imported_call_sites: Arc::default(),
             misplaced_directives: Vec::new(),
             inline_server_action_exports: Vec::new(),
             di_key_sites: Vec::new(),
@@ -3279,6 +3282,23 @@ pub struct CalleeUse {
     pub span_start: u32,
 }
 
+/// A direct call whose root identifier resolves to a runtime ESM import.
+///
+/// Every occurrence is retained. Computed or optional callees and arbitrary
+/// value aliases are excluded; origin resolution through re-exports is deferred
+/// to analysis.
+#[derive(Debug, Clone, PartialEq, Eq, bitcode::Encode, bitcode::Decode)]
+pub struct ImportedCallSite {
+    /// The local root import binding used by the callee.
+    pub local_name: String,
+    /// Dot-separated static member suffix, empty for a bare imported call.
+    pub member_path: String,
+    /// Static first string argument, or `None` for any other argument shape.
+    pub first_argument: Option<String>,
+    /// Start byte offset of this call site.
+    pub span_start: u32,
+}
+
 /// A `"use client"` / `"use server"` directive string written as an expression
 /// statement in `program.body` (NOT the leading prologue), so the RSC bundler
 /// silently ignores it. One entry per offending occurrence. Consumed by the
@@ -3746,7 +3766,7 @@ const _: () = assert!(std::mem::size_of::<SemanticFact>() == 96);
 #[cfg(target_pointer_width = "64")]
 const _: () = assert!(std::mem::size_of::<SinkSite>() == 216);
 #[cfg(target_pointer_width = "64")]
-const _: () = assert!(std::mem::size_of::<ModuleInfo>() == 1424);
+const _: () = assert!(std::mem::size_of::<ModuleInfo>() == 1440);
 #[cfg(target_pointer_width = "64")]
 const _: () = assert!(std::mem::size_of::<TypeMemberTypeEntry>() == 72);
 
@@ -4370,6 +4390,7 @@ mod tests {
             sanitized_sink_args: Vec::new(),
             security_control_sites: Vec::new(),
             callee_uses: Vec::new(),
+            imported_call_sites: Arc::default(),
             misplaced_directives: Vec::new(),
             inline_server_action_exports: Vec::new(),
             di_key_sites: Vec::new(),

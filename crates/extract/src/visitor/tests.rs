@@ -13196,3 +13196,251 @@ fn map_get_result_ignores_builtin_values_and_other_receivers() {
     );
     assert!(!has_member_access(&info, "Session", "reset"));
 }
+
+#[test]
+fn imported_call_sites_preserve_aliases_arguments_and_repeated_sites() {
+    let source = r#"
+        import { defineProof as create } from "@gdp-ts/core";
+        import * as gdp from "./barrel";
+        create("CanRead");
+        create("CanWrite");
+        create(kind);
+        create();
+        gdp.defineProof("CanRead");
+        gdp.inner.defineProof("CanDelete");
+    "#;
+    let info = parse(source);
+    let calls: Vec<_> = info
+        .imported_call_sites
+        .iter()
+        .map(|call| {
+            (
+                call.local_name.as_str(),
+                call.member_path.as_str(),
+                call.first_argument.as_deref(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        calls,
+        vec![
+            ("create", "", Some("CanRead")),
+            ("create", "", Some("CanWrite")),
+            ("create", "", None),
+            ("create", "", None),
+            ("gdp", "defineProof", Some("CanRead")),
+            ("gdp", "inner.defineProof", Some("CanDelete")),
+        ]
+    );
+    let positions: Vec<_> = info
+        .imported_call_sites
+        .iter()
+        .map(|call| call.span_start)
+        .collect();
+    assert!(positions.windows(2).all(|pair| pair[0] < pair[1]));
+    assert!(
+        info.imported_call_sites
+            .iter()
+            .all(|call| source[call.span_start as usize..].starts_with(&call.local_name))
+    );
+}
+
+#[test]
+fn imported_call_sites_preserve_static_labels_through_transparent_syntax() {
+    let info = parse(
+        r"
+        import { defineProof as make } from '@gdp-ts/core';
+        make(('CanDelete'));
+        make(`CanDelete`);
+        make('CanDelete' as const);
+        make(`Can${kind}`);
+        make(kind);
+    ",
+    );
+    let labels: Vec<_> = info
+        .imported_call_sites
+        .iter()
+        .map(|call| call.first_argument.as_deref())
+        .collect();
+    assert_eq!(
+        labels,
+        [
+            Some("CanDelete"),
+            Some("CanDelete"),
+            Some("CanDelete"),
+            None,
+            None
+        ]
+    );
+}
+
+#[test]
+fn imported_call_sites_mdx_require_scope_identity_and_original_offsets() {
+    let source = r#"# Proof example
+
+import { defineProof as make } from "@gdp-ts/core";
+
+export const trusted = make("Allowed");
+
+export const other = (() => { const make = (kind: string) => kind; return make("Shadow"); })();
+"#;
+    let info = crate::parse_from_content(FileId(0), Path::new("proofs.mdx"), source);
+    let calls: Vec<_> = info
+        .imported_call_sites
+        .iter()
+        .map(|call| {
+            (
+                call.local_name.as_str(),
+                call.first_argument.as_deref(),
+                call.span_start as usize,
+            )
+        })
+        .collect();
+    assert_eq!(
+        calls,
+        vec![(
+            "make",
+            Some("Allowed"),
+            source.find("make(\"Allowed\")").unwrap()
+        )]
+    );
+}
+
+#[test]
+fn imported_identifier_default_export_preserves_binding_identity() {
+    let info = parse(r#"import { defineProof as make } from "@gdp-ts/core"; export default make;"#);
+    let export = info
+        .exports
+        .iter()
+        .find(|export| export.name == ExportName::Default)
+        .unwrap();
+    assert_eq!(export.local_name.as_deref(), Some("make"));
+}
+
+#[test]
+fn imported_call_sites_require_lexical_runtime_esm_bindings() {
+    let source = r#"
+        create("BeforeImport");
+        import { defineProof as create } from "@gdp-ts/core";
+        import * as ns from "./barrel";
+        import defaultFactory from "./default-api";
+        import type { defineProof as erased } from "@gdp-ts/core";
+        import { type defineProof as erasedMember } from "@gdp-ts/core";
+        function shadow(create: (kind: string) => unknown, ns: { defineProof: (kind: string) => unknown }) {
+            create("Parameter");
+            ns.defineProof("NamespaceParameter");
+        }
+        {
+            const create = (kind: string) => kind;
+            create("Block");
+        }
+        function inner() {
+            create("NestedImport");
+            ns.defineProof("NamespaceImport");
+        }
+        const alias = create;
+        alias("ValueAlias");
+        erased("TypeImport");
+        erasedMember("TypeSpecifier");
+        globalFactory("Global");
+        create?.("OptionalCall");
+        ns?.defineProof("OptionalMember");
+        ns.defineProof?.("OptionalNamespaceCall");
+        ns["defineProof"]("Computed");
+        defaultFactory("DefaultImport");
+        create(`Template`);
+    "#;
+    let info = parse(source);
+    let calls: Vec<_> = info
+        .imported_call_sites
+        .iter()
+        .map(|call| {
+            (
+                call.local_name.as_str(),
+                call.member_path.as_str(),
+                call.first_argument.as_deref(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        calls,
+        vec![
+            ("create", "", Some("BeforeImport")),
+            ("create", "", Some("NestedImport")),
+            ("ns", "defineProof", Some("NamespaceImport")),
+            ("defaultFactory", "", Some("DefaultImport")),
+            ("create", "", Some("Template")),
+        ]
+    );
+}
+
+#[test]
+fn imported_call_sites_abstain_on_redeclared_and_non_esm_bindings() {
+    let source = r#"
+        import { defineProof as trusted } from "@gdp-ts/core";
+        trusted("Control");
+        import { defineProof as duplicate } from "@gdp-ts/core";
+        const duplicate = (kind: string) => kind;
+        duplicate("Redeclared");
+        const { defineProof: required } = require("@gdp-ts/core");
+        required("CommonJS");
+        import legacy = require("@gdp-ts/core");
+        legacy.defineProof("ImportEquals");
+    "#;
+    let info = parse(source);
+    let calls: Vec<_> = info
+        .imported_call_sites
+        .iter()
+        .map(|call| (call.local_name.as_str(), call.first_argument.as_deref()))
+        .collect();
+    assert_eq!(calls, vec![("trusted", Some("Control"))]);
+}
+
+#[test]
+fn imported_call_sites_preserve_embedded_script_scope_and_offsets() {
+    let body = r#"
+import { defineProof as make } from "@gdp-ts/core";
+make("Control");
+function shadow(make: (kind: string) => unknown) { make("Shadow"); }
+"#;
+    let cases = [
+        (
+            "view.vue",
+            format!(
+                "<template><p>Example</p></template>\n<script setup lang=\"ts\">{body}</script>"
+            ),
+        ),
+        (
+            "view.svelte",
+            format!("<p>Example</p>\n<script lang=\"ts\">{body}</script>"),
+        ),
+        ("view.astro", format!("---{body}---\n<p>Example</p>")),
+        (
+            "view.gts",
+            format!("<template><p>Example</p></template>\n{body}"),
+        ),
+    ];
+    for (path, source) in cases {
+        let info = crate::parse_from_content(FileId(0), Path::new(path), &source);
+        let calls: Vec<_> = info
+            .imported_call_sites
+            .iter()
+            .map(|call| {
+                (
+                    call.local_name.as_str(),
+                    call.first_argument.as_deref(),
+                    call.span_start as usize,
+                )
+            })
+            .collect();
+        assert_eq!(
+            calls,
+            vec![(
+                "make",
+                Some("Control"),
+                source.find("make(\"Control\")").unwrap()
+            )],
+            "{path}"
+        );
+    }
+}

@@ -29,6 +29,8 @@ pub enum RulePackRuleKind {
     BannedEffect,
     /// Ban exported names that match one of `exports`.
     BannedExport,
+    /// Restrict gdp-ts proof factory calls to explicitly allowed modules.
+    GdpProofProducer,
 }
 
 /// Internal side-effect taxonomy derived from security catalogue rows.
@@ -91,6 +93,7 @@ impl EffectKind {
 /// `callees` applies only to `banned-call` rules; `specifiers` and
 /// `ignoreTypeOnly` apply only to `banned-import` rules; `effects` applies
 /// only to `banned-effect` rules; `exports` applies only to `banned-export`
+/// rules. `allowedFiles` and `proofKinds` apply only to `gdp-proof-producer`
 /// rules. `zones` can scope any rule kind to files classified into one of the
 /// named boundary zones. Setting a field on the wrong kind is a load error
 /// (fail loud, never silently ignore policy).
@@ -129,6 +132,15 @@ pub struct RulePackRule {
     /// glob syntax is supported. Re-exports are out of scope for this rule.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub exports: Vec<String>,
+    /// Project-root-relative globs allowed to call `@gdp-ts/core.defineProof`
+    /// (`gdp-proof-producer` only). At least one pattern is required.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub allowed_files: Vec<String>,
+    /// Exact literal proof labels checked by a `gdp-proof-producer` rule.
+    /// Empty or absent checks every recognized factory call, including calls
+    /// with dynamic labels. A nonempty list checks only static string labels.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub proof_kinds: Vec<String>,
     /// When `true`, type-only imports (`import type ...` and type-only
     /// re-exports) are ignored by `banned-import`; type-only exports are
     /// ignored by `banned-export`. Defaults to `false`: type-only sites are
@@ -503,9 +515,62 @@ fn validate_rule(rule: &RulePackRule, path: &Path, errors: &mut Vec<RulePackErro
         RulePackRuleKind::BannedImport => validate_banned_import_rule(rule, &err, errors),
         RulePackRuleKind::BannedEffect => validate_banned_effect_rule(rule, &err, errors),
         RulePackRuleKind::BannedExport => validate_banned_export_rule(rule, &err, errors),
+        RulePackRuleKind::GdpProofProducer => validate_gdp_producer_rule(rule, &err, errors),
+    }
+
+    if rule.kind != RulePackRuleKind::GdpProofProducer {
+        for (field, values) in [
+            ("allowedFiles", &rule.allowed_files),
+            ("proofKinds", &rule.proof_kinds),
+        ] {
+            if !values.is_empty() {
+                errors.push(err(format!(
+                    "`{field}` applies only to gdp-proof-producer rules"
+                )));
+            }
+        }
     }
 
     validate_rule_file_globs(rule, &err, errors);
+}
+
+fn validate_gdp_producer_rule(
+    rule: &RulePackRule,
+    err: &impl Fn(String) -> RulePackError,
+    errors: &mut Vec<RulePackError>,
+) {
+    if rule.allowed_files.is_empty() {
+        errors.push(err(
+            "gdp-proof-producer rules must list at least one `allowedFiles` pattern".to_owned(),
+        ));
+    }
+    for (field, values) in [
+        ("callees", &rule.callees),
+        ("specifiers", &rule.specifiers),
+        ("exports", &rule.exports),
+    ] {
+        if !values.is_empty() {
+            errors.push(err(format!(
+                "`{field}` does not apply to gdp-proof-producer rules"
+            )));
+        }
+    }
+    if !rule.effects.is_empty() || rule.ignore_type_only {
+        errors.push(err(
+            "`effects` and `ignoreTypeOnly` do not apply to gdp-proof-producer rules".to_owned(),
+        ));
+    }
+    for pattern in &rule.allowed_files {
+        if pattern.trim().is_empty() {
+            errors.push(err("`allowedFiles` patterns must not be empty".to_owned()));
+            continue;
+        }
+        if let Err(error) = compile_user_glob(pattern, "rulePacks rules[].allowedFiles") {
+            errors.push(err(format!(
+                "invalid `allowedFiles` glob `{pattern}`: {error}"
+            )));
+        }
+    }
 }
 
 /// Validate a `banned-call` rule's required and cross-kind fields.
@@ -700,6 +765,64 @@ fn callee_pattern_error(pattern: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn loads_gdp_producer_permissions_and_kind_ownership() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = write_pack(
+            dir.path(),
+            "gdp.json",
+            r#"{
+            "version": 1, "name": "gdp",
+            "rules": [
+                {"id": "trusted", "kind": "gdp-proof-producer", "allowedFiles": ["src/proofs/**"]},
+                {"id": "owner", "kind": "gdp-proof-producer", "allowedFiles": ["src/proofs/delete.ts"], "proofKinds": ["CanDeleteProject"]}
+            ]
+        }"#,
+        );
+        let loaded = load_rule_packs(dir.path(), &[path]);
+        assert!(loaded.is_ok(), "gdp proof rules must load: {loaded:?}");
+        let pack = &loaded.unwrap()[0];
+        let rules = serde_json::to_value(&pack.rules).unwrap();
+        assert_eq!(
+            rules[0]["allowedFiles"],
+            serde_json::json!(["src/proofs/**"])
+        );
+        assert_eq!(
+            rules[1]["proofKinds"],
+            serde_json::json!(["CanDeleteProject"])
+        );
+    }
+
+    #[test]
+    fn rejects_empty_gdp_producer_location_patterns() {
+        let dir = tempfile::tempdir().unwrap();
+        for pattern in ["", "   "] {
+            let content = serde_json::json!({
+                "version": 1, "name": "gdp",
+                "rules": [{"id": "trusted", "kind": "gdp-proof-producer", "allowedFiles": [pattern]}]
+            });
+            let path = write_pack(dir.path(), "gdp.json", &content.to_string());
+            let result = load_rule_packs(dir.path(), &[path]);
+            assert!(
+                result.is_err(),
+                "empty producer permission must fail: {pattern:?}"
+            );
+        }
+        let path = write_pack(
+            dir.path(),
+            "gdp.json",
+            r#"{
+            "version": 1, "name": "gdp", "rules": [
+                {"id": "trusted", "kind": "gdp-proof-producer", "allowedFiles": ["src/proofs/**"]}
+            ]
+        }"#,
+        );
+        assert_eq!(
+            load_rule_packs(dir.path(), &[path]).unwrap()[0].rules[0].allowed_files,
+            ["src/proofs/**"]
+        );
+    }
 
     fn write_pack(dir: &Path, name: &str, content: &str) -> String {
         std::fs::write(dir.join(name), content).unwrap();

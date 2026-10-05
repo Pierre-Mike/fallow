@@ -1960,3 +1960,34 @@ fn cache_roundtrip_preserves_component_contract_evidence() {
     let restored = cached_to_module(&decoded, FileId(0));
     assert_eq!(restored.component_contracts, module.component_contracts);
 }
+
+#[test]
+fn cache_roundtrip_preserves_imported_call_sites_and_literal_arguments() {
+    let source = r#"import { defineProof as make } from "@gdp-ts/core";
+make("CanRead"); make("CanWrite"); make(kind);"#;
+    let module = parse_from_content(FileId(0), Path::new("src/proofs.ts"), source);
+    let cached = module_to_cached_from_parts(&module, 10, 20);
+    let decoded: CachedModule =
+        bitcode::decode(&bitcode::encode(&cached)).expect("decode cached module");
+    let restored = cached_to_module(&decoded, FileId(0));
+    let calls: Vec<_> = restored
+        .imported_call_sites
+        .iter()
+        .map(|call| {
+            (
+                call.local_name.as_str(),
+                call.member_path.as_str(),
+                call.first_argument.as_deref(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        calls,
+        vec![
+            ("make", "", Some("CanRead")),
+            ("make", "", Some("CanWrite")),
+            ("make", "", None)
+        ]
+    );
+    assert_eq!(restored.imported_call_sites, module.imported_call_sites);
+}

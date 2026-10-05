@@ -6,15 +6,13 @@ use fallow_types::workspace::WorkspaceDiagnostic;
 use serde::Serialize;
 
 /// Current schema version for `fallow audit --format json`.
-pub const AUDIT_SCHEMA_VERSION: u32 = 11;
+pub const AUDIT_SCHEMA_VERSION: u32 = 12;
 
 /// Current schema version for bare combined JSON output.
 ///
-/// Version 12 tracks `clone_groups[].instances[].fragment` becoming optional on
-/// the shared clone-instance shape this envelope embeds. Bare combined output
-/// cannot suppress that text today, so its wire stays byte-identical; the bump
-/// records that the contract no longer guarantees the key.
-pub const COMBINED_SCHEMA_VERSION: u32 = 12;
+/// Version 13 adds `gdp-proof-producer` to the required policy rule kind enum
+/// in the embedded check contract.
+pub const COMBINED_SCHEMA_VERSION: u32 = 13;
 
 /// Schema projection for the audit envelope's exact version.
 #[cfg(feature = "schema")]
