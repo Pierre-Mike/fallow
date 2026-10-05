@@ -44,10 +44,10 @@ export interface HealthArgsOptions {
  * the Health view. Kept pure so flag-forwarding rules can be unit-tested.
  *
  * `fallow health` shows every section by default; passing ANY section flag
- * switches it to "only these sections". We always request the cheap sections
- * (`--score --complexity --targets`, no git) and add `--hotspots` only when the
- * user opted in, since that section walks git history. The combined sidebar run
- * is untouched (it keeps `--skip health`); this is a separate, lazy spawn.
+ * switches it to "only these sections". We always request score, complexity,
+ * and targets. Targets use git history even when the hotspot list is hidden;
+ * `--hotspots` controls that visible section. The combined sidebar run keeps
+ * `--skip health`; this is a separate, lazy spawn.
  */
 export const buildHealthArgs = (options: HealthArgsOptions): BuiltCliArgs => {
   const args = ["health", "--format", "json", "--quiet", "--score", "--complexity", "--targets"];

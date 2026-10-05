@@ -590,7 +590,7 @@
         "fallow.health.hotspots": {
           "type": "boolean",
           "default": true,
-          "description": "Include git churn hotspots in the Health view. Hotspot analysis walks git history; disable on very large repositories to keep the Health refresh fast. Has no effect outside a git repository."
+          "description": "Show git churn hotspots in the Health view. Refactoring targets still use git history when this is disabled. Hotspots require a git repository."
         },
         "fallow.health.topFindings": {
           "type": "integer",
