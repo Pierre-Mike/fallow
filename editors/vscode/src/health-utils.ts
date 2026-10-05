@@ -8,7 +8,7 @@ import { appendCommonScopeArgs, type BuiltCliArgs } from "./cli-args-utils.js";
  * or VS Code access) so the argv-construction rules can be unit-tested.
  */
 export interface HealthArgsOptions {
-  /** Include git churn hotspots (`--hotspots`). Touches git history. */
+  /** Show git churn hotspots (`--hotspots`); targets still read git history. */
   readonly hotspots: boolean;
   /** Cap on complexity findings serialized into the tree (`--top <N>`). */
   readonly topFindings: number;

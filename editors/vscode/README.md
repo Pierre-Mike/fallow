@@ -94,7 +94,7 @@ Mute state is stored in the workspace, so it survives reload but does not bleed 
 | `fallow.duplication.ignoreImports` | `false` | Exclude import declarations from duplicate-code detection. |
 | `fallow.duplication.ignoreSymlinks` | `false` | Omit clone instances whose path is a symlink or lies under a symlinked directory. When unset, the project config decides. |
 | `fallow.health.enabled` | `true` | Show the Fallow Health view (score and grade, complexity findings, hotspot candidates, refactoring candidates). When off, the Health view stays empty and no extra analysis runs. |
-| `fallow.health.hotspots` | `true` | Include git churn hotspots in the Health view. Hotspot analysis walks git history; disable on very large repositories to keep the Health refresh fast. Has no effect outside a git repository. |
+| `fallow.health.hotspots` | `true` | Show git churn hotspots in the Health view. Refactoring targets still use git history when this is disabled. Hotspots require a git repository. |
 | `fallow.health.topFindings` | `20` | Maximum number of complexity findings shown in the Health view (passed to `fallow health --top`). |
 | `fallow.health.statusBar` | `true` | Show the project health score and grade in the Fallow status bar item. |
 | `fallow.health.inlineComplexity` | `false` | Show LSP code lenses above functions that exceed Fallow Health cyclomatic or cognitive thresholds. Off by default to keep editor chrome unchanged. |
