@@ -41,6 +41,11 @@ error by suppressing a downstream detector.
   Reachability does not gate them: a file that only a task runner executes is
   still real code. Such a file can get an `unused-files` finding and a
   boundary finding in the same run (issue #2937).
+  Opt-in `gdp-proof-producer` rule-pack policies also check every analyzed
+  file. They join scope-resolved imported call sites with resolved imports
+  and re-exports to restrict gdp-ts factory creation. Each applicable rule
+  reports independently. Kind-specific rules match only literal strings;
+  arbitrary wrappers and ambiguous origins remain outside the check.
   Import rules follow re-export chains. A named or default import through a
   barrel is judged against the zone of the module that declares the symbol,
   and `to_path` is that origin module. The optional `via_path` field names the

@@ -24,9 +24,10 @@ use crate::{
 use fallow_types::extract::{
     AngularComponentSelector, AngularInputMember, AngularOutputMember, CalleeUse,
     ClassHeritageInfo, ComponentFunction, ComponentProp, DiKeySite, DispatchedEvent, HookUse,
-    ImportLoadKind, ImportLoadKindOverrideFact, LocalTypeDeclaration, MisplacedDirectiveSite,
-    PublicSignatureTypeReference, RenderEdge, SanitizedSinkArg, SanitizerScope,
-    SecurityControlSite, SinkLiteralValue, SinkSite, SkippedSecurityCalleeSite, TaintedBinding,
+    ImportLoadKind, ImportLoadKindOverrideFact, ImportedCallSite, LocalTypeDeclaration,
+    MisplacedDirectiveSite, PublicSignatureTypeReference, RenderEdge, SanitizedSinkArg,
+    SanitizerScope, SecurityControlSite, SinkLiteralValue, SinkSite, SkippedSecurityCalleeSite,
+    TaintedBinding,
 };
 use helpers::LitCustomElementDecorator;
 use helpers::array_element_type_from_type;
@@ -707,6 +708,12 @@ pub(crate) struct ModuleInfoExtractor {
     /// occurrence wins). Consumed by the `boundaries.calls.forbidden`
     /// detector.
     callee_uses: Vec<CalleeUse>,
+    /// Call facts paired with the root reference span until semantic admission.
+    pending_imported_call_sites: Vec<(Span, ImportedCallSite)>,
+    /// Runtime ESM roots precollected before the body walk.
+    runtime_import_locals: FxHashSet<String>,
+    /// Imported calls admitted by semantic scope identity.
+    imported_call_sites: Vec<ImportedCallSite>,
     /// Dedup guard for `callee_uses`. Working state only: not persisted and
     /// not merged across SFC script blocks (each block dedups independently;
     /// the detector matches per unique path, so cross-block duplicates only
@@ -972,6 +979,22 @@ pub(crate) struct SecurityPathSinkBinding {
 }
 
 impl ModuleInfoExtractor {
+    pub(crate) fn imported_call_reference_candidates(&self) -> FxHashSet<Span> {
+        self.pending_imported_call_sites
+            .iter()
+            .map(|(span, _)| *span)
+            .collect()
+    }
+
+    pub(crate) fn resolve_imported_call_sites(&mut self, references: &FxHashSet<Span>) {
+        self.imported_call_sites.extend(
+            self.pending_imported_call_sites
+                .drain(..)
+                .filter(|(span, _)| references.contains(span))
+                .map(|(_, call)| call),
+        );
+    }
+
     /// Record the template that a `defineOgImage('Name')` or
     /// `defineOgImageComponent('Name')` call names with a static string.
     pub(super) fn record_og_image_template_call(&mut self, call: &CallExpression<'_>) {
@@ -1549,6 +1572,9 @@ impl ModuleInfoExtractor {
         self.remap_type_and_signature_spans(&mut remap);
         self.remap_handled_spans(&mut remap);
         self.remap_security_spans(&mut remap);
+        for call in &mut self.imported_call_sites {
+            call.span_start = remap(Span::new(call.span_start, call.span_start)).start;
+        }
     }
 
     /// Remap import/export/re-export/dynamic-import/require graph spans.
@@ -2988,6 +3014,10 @@ impl ModuleInfoExtractor {
         }
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "flat field projection preserves the complete extracted module contract"
+    )]
     pub(crate) fn into_module_info(
         mut self,
         file_id: fallow_types::discover::FileId,
@@ -3052,6 +3082,7 @@ impl ModuleInfoExtractor {
             sanitized_sink_args: self.sanitized_sink_args,
             security_control_sites: self.security_control_sites,
             callee_uses: self.callee_uses,
+            imported_call_sites: self.imported_call_sites.into(),
             misplaced_directives: self.misplaced_directives,
             inline_server_action_exports: self.inline_server_action_exports,
             di_key_sites: self.di_key_sites,
@@ -3198,6 +3229,11 @@ impl ModuleInfoExtractor {
         info.client_only_dynamic_import_spans
             .append(&mut self.client_only_dynamic_import_spans);
         info.callee_uses.append(&mut self.callee_uses);
+        if !self.imported_call_sites.is_empty() {
+            let mut calls = std::mem::take(&mut info.imported_call_sites).to_vec();
+            calls.append(&mut self.imported_call_sites);
+            info.imported_call_sites = calls.into();
+        }
     }
 
     fn merge_security_info(&mut self, info: &mut ModuleInfo) {

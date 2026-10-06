@@ -19,7 +19,8 @@ use crate::{
 };
 use fallow_types::extract::{
     AngularComponentSelector, CalleeUse, ClassHeritageInfo, DiFramework, DiKeySite, DiRole,
-    ImportLoadKind, LocalTypeDeclaration, MisplacedDirectiveSite, PublicSignatureTypeReference,
+    ImportLoadKind, ImportedCallSite, LocalTypeDeclaration, MisplacedDirectiveSite,
+    PublicSignatureTypeReference,
 };
 
 use crate::asset_url::normalize_asset_url;
@@ -854,6 +855,25 @@ impl ModuleInfoExtractor {
                         continue;
                     };
                     for specifier in specifiers {
+                        if !decl.import_kind.is_type() {
+                            let runtime_local = match specifier {
+                                ImportDeclarationSpecifier::ImportSpecifier(named)
+                                    if !named.import_kind.is_type() =>
+                                {
+                                    Some(named.local.name.as_str())
+                                }
+                                ImportDeclarationSpecifier::ImportDefaultSpecifier(default) => {
+                                    Some(default.local.name.as_str())
+                                }
+                                ImportDeclarationSpecifier::ImportNamespaceSpecifier(namespace) => {
+                                    Some(namespace.local.name.as_str())
+                                }
+                                ImportDeclarationSpecifier::ImportSpecifier(_) => None,
+                            };
+                            if let Some(local) = runtime_local {
+                                self.runtime_import_locals.insert(local.to_owned());
+                            }
+                        }
                         match specifier {
                             ImportDeclarationSpecifier::ImportNamespaceSpecifier(namespace) => {
                                 self.namespace_import_locals
@@ -3518,6 +3538,9 @@ impl<'a> Visit<'a> for ModuleInfoExtractor {
             ExportDefaultDeclarationKind::FunctionDeclaration(function) => {
                 function.id.as_ref().map(|id| id.name.to_string())
             }
+            ExportDefaultDeclarationKind::Identifier(identifier) => {
+                Some(identifier.name.to_string())
+            }
             _ => None,
         };
 
@@ -3860,6 +3883,7 @@ impl<'a> Visit<'a> for ModuleInfoExtractor {
         self.record_angular_dynamic_providers(expr);
 
         self.record_callee_use(expr);
+        self.record_imported_call_site(expr);
 
         walk::walk_call_expression(self, expr);
     }
@@ -4897,6 +4921,17 @@ fn flatten_callee_path(expr: &Expression<'_>) -> Option<String> {
     }
 }
 
+/// Root reference of a static callee without optional or computed members.
+fn imported_callee_root<'a>(expression: &'a Expression<'a>) -> Option<&'a IdentifierReference<'a>> {
+    match unwrap_parens(expression) {
+        Expression::Identifier(identifier) => Some(identifier),
+        Expression::StaticMemberExpression(member) if !member.optional => {
+            imported_callee_root(&member.object)
+        }
+        _ => None,
+    }
+}
+
 fn terminal_static_member_name<'a>(expr: &'a Expression<'_>) -> Option<&'a str> {
     match unwrap_parens(expr) {
         Expression::StaticMemberExpression(member) => Some(member.property.name.as_str()),
@@ -5440,6 +5475,37 @@ impl ModuleInfoExtractor {
                 span_start: expr.span.start,
             });
         }
+    }
+
+    /// Capture each static call and defer lexical import admission to semantics.
+    fn record_imported_call_site(&mut self, call: &CallExpression<'_>) {
+        if call.optional || self.runtime_import_locals.is_empty() {
+            return;
+        }
+        let Some(root) = imported_callee_root(&call.callee) else {
+            return;
+        };
+        if !self.runtime_import_locals.contains(root.name.as_str()) {
+            return;
+        }
+        let Some(path) = flatten_callee_path(&call.callee) else {
+            return;
+        };
+        let member_path = path.split_once('.').map_or("", |(_, rest)| rest).to_owned();
+        let first_argument = call
+            .arguments
+            .first()
+            .and_then(Argument::as_expression)
+            .and_then(static_string_literal_value);
+        self.pending_imported_call_sites.push((
+            root.span,
+            ImportedCallSite {
+                local_name: root.name.to_string(),
+                member_path,
+                first_argument,
+                span_start: call.span.start,
+            },
+        ));
     }
 
     /// Push an HTML-template-sourced asset reference onto `imports`, mirroring

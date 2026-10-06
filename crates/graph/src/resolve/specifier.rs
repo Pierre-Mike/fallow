@@ -1929,7 +1929,7 @@ fn resolve_resolved_specifier(
         from_style,
     }
     .resolve(resolved_path);
-    credit_workspace_package_target(ctx, from_file, specifier, resolved_path, result)
+    credit_workspace_package_target(ctx, from_file, specifier, from_style, resolved_path, result)
 }
 
 /// Keep dependency credit for a workspace package import that resolved to the
@@ -1943,6 +1943,7 @@ fn credit_workspace_package_target(
     ctx: &ResolveContext<'_>,
     from_file: &Path,
     specifier: &str,
+    from_style: bool,
     resolved_path: &Path,
     result: ResolveResult,
 ) -> ResolveResult {
@@ -1952,7 +1953,9 @@ fn credit_workspace_package_target(
     let package_name = if specifier.starts_with('#') {
         package_imports_workspace_target(ctx, from_file, specifier, resolved_path)
     } else {
-        installed_workspace_package_target(ctx, from_file, specifier, resolved_path)
+        self_reference_package_target(ctx, from_file, specifier, from_style, file_id).or_else(
+            || installed_workspace_package_target(ctx, from_file, specifier, resolved_path),
+        )
     };
     match package_name {
         Some(package_name) => ResolveResult::InternalPackageModule {
@@ -1960,6 +1963,35 @@ fn credit_workspace_package_target(
             package_name,
         },
         None => result,
+    }
+}
+
+/// Preserve verified package identity when its own exports resolve internally.
+/// Path aliases remain ordinary internal edges even if their spelling is a
+/// package name, because they did not establish package-export provenance.
+fn self_reference_package_target(
+    ctx: &ResolveContext<'_>,
+    from_file: &Path,
+    specifier: &str,
+    from_style: bool,
+    file_id: fallow_types::discover::FileId,
+) -> Option<String> {
+    let package_name = package_usage_name_for_external_bare_specifier(specifier)?;
+    let manifest = nearest_package_manifest(ctx.package_manifests, from_file)?;
+    if manifest.name.as_deref() != Some(package_name.as_str())
+        || manifest.package_json.exports.is_none()
+    {
+        return None;
+    }
+    if matches_nearest_tsconfig_path_alias(ctx, from_file, specifier) {
+        return None;
+    }
+    match try_workspace_package_fallback(ctx, specifier, from_style || is_style_file(from_file))? {
+        ResolveResult::InternalPackageModule {
+            file_id: exported_file,
+            package_name,
+        } if exported_file == file_id => Some(package_name),
+        _ => None,
     }
 }
 

@@ -186,6 +186,18 @@ fn emit_policy_rule(rule: &GuardPolicyRule) {
     if let Some(message) = &rule.message {
         outln!("           {message}");
     }
+    if !rule.allowed_files.is_empty() {
+        outln!(
+            "           allowed producers: {}",
+            rule.allowed_files.join(", ")
+        );
+        let kinds = if rule.proof_kinds.is_empty() {
+            "all, including dynamic labels".to_owned()
+        } else {
+            rule.proof_kinds.join(", ")
+        };
+        outln!("           proof kinds: {kinds}");
+    }
     outln!(
         "           suppress: // fallow-ignore-next-line {} -- <reason>",
         rule.suppress_token

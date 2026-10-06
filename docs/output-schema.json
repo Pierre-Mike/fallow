@@ -15812,7 +15812,7 @@
         },
         "matched": {
           "type": "string",
-          "description": "What matched: the written callee path for `banned-call` (e.g.\n`cp.exec`), the raw import specifier for `banned-import` (e.g.\n`moment/locale/nl`), `<effect>: <callee>` for `banned-effect`, or the\nexported name for `banned-export`."
+          "description": "What matched: the written callee path for `banned-call` (e.g.\n`cp.exec`), the raw import specifier for `banned-import` (e.g.\n`moment/locale/nl`), `<effect>: <callee>` for `banned-effect`, or the\nexported name for `banned-export`. For `gdp-proof-producer`, the canonical\nfactory with its JSON-quoted literal label or `...` for a dynamic label."
         },
         "severity": {
           "description": "Effective severity for this finding (per-rule `severity`, else the\n`rules.\"policy-violation\"` master).",
@@ -15885,6 +15885,11 @@
           "type": "string",
           "const": "banned-export",
           "description": "An exported name matched a `banned-export` rule."
+        },
+        {
+          "type": "string",
+          "const": "gdp-proof-producer",
+          "description": "A resolved gdp-ts proof factory call occurred outside allowed modules."
         }
       ],
       "description": "Which rule-pack rule kind produced a [`PolicyViolation`]."
@@ -19636,7 +19641,7 @@
     },
     "ReviewBriefSchemaVersion": {
       "type": "integer",
-      "const": 11,
+      "const": 12,
       "description": "Independently-versioned wire-version newtype for the brief envelope.\nSerializes as the integer `REVIEW_BRIEF_SCHEMA_VERSION`."
     },
     "RiskClass": {
@@ -24860,17 +24865,17 @@
     },
     "AuditSchemaVersion": {
       "type": "integer",
-      "const": 11,
+      "const": 12,
       "description": "Schema projection for the audit envelope's exact version."
     },
     "CheckSchemaVersion": {
       "type": "integer",
-      "const": 9,
+      "const": 10,
       "description": "Schema projection for the dead-code envelope's exact version."
     },
     "CombinedSchemaVersion": {
       "type": "integer",
-      "const": 12,
+      "const": 13,
       "description": "Schema projection for the combined envelope's exact version."
     },
     "DupesSchemaVersion": {

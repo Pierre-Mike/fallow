@@ -458,6 +458,11 @@ fn parse_statement_body(
     let accepted = !parser_return.fatal_error && parser_return.diagnostics.is_empty();
     let mut extractor = ModuleInfoExtractor::new();
     extractor.visit_program(&parser_return.program);
+    crate::parse::compute_semantic_usage_for_extractor(
+        &parser_return.program,
+        &mut extractor,
+        &rustc_hash::FxHashSet::default(),
+    );
     extractor.remap_spans_with(|span| extraction.remap_span(span));
     (
         extractor.into_module_info(file_id, content_hash, parsed_suppressions),

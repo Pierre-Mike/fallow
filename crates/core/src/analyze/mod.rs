@@ -606,29 +606,26 @@ fn run_boundary_call_detector(
 /// `policy-violation` master severity (a kill switch: per-rule severity
 /// cannot resurrect it) and on at least one configured rule pack. Extracted
 /// alongside [`run_circular_dep_detector`].
-fn run_policy_detector(
-    graph: &ModuleGraph,
-    modules: &[ModuleInfo],
-    config: &ResolvedConfig,
-    declared_deps: &FxHashSet<String>,
-    suppressions: &crate::suppress::SuppressionContext<'_>,
-    line_offsets_by_file: &LineOffsetsMap<'_>,
-) -> Vec<PolicyViolationFinding> {
-    if config.rules.policy_violation == Severity::Off {
+fn run_policy_detector(input: DeadCodeDetectorInput<'_>) -> Vec<PolicyViolationFinding> {
+    if input.config.rules.policy_violation == Severity::Off {
         return Vec::new();
     }
-    if config.rule_packs.is_empty() {
-        record_unconfigured_check(config, WorkspaceDiagnosticKind::RulePacksNotConfigured);
+    if input.config.rule_packs.is_empty() {
+        record_unconfigured_check(
+            input.config,
+            WorkspaceDiagnosticKind::RulePacksNotConfigured,
+        );
         return Vec::new();
     }
-    policy::find_policy_violations(
-        graph,
-        modules,
-        config,
-        declared_deps,
-        suppressions,
-        line_offsets_by_file,
-    )
+    policy::find_policy_violations(policy::PolicyAnalysisInput {
+        graph: input.graph,
+        modules: input.modules,
+        resolved_modules: input.resolved_modules,
+        config: input.config,
+        declared_deps: input.declared_deps,
+        suppressions: input.suppressions,
+        line_offsets_by_file: input.line_offsets_by_file,
+    })
     .into_iter()
     .map(PolicyViolationFinding::with_actions)
     .collect()
@@ -638,12 +635,7 @@ fn run_policy_detector(
 /// in parallel. Extracted so the main `find_dead_code_full` join tree stays
 /// within the nesting budget.
 fn run_boundary_aux_detectors(
-    graph: &ModuleGraph,
-    modules: &[ModuleInfo],
-    config: &ResolvedConfig,
-    declared_deps: &FxHashSet<String>,
-    suppressions: &crate::suppress::SuppressionContext<'_>,
-    line_offsets_by_file: &LineOffsetsMap<'_>,
+    input: DeadCodeDetectorInput<'_>,
 ) -> (
     Vec<BoundaryCoverageViolationFinding>,
     (
@@ -652,28 +644,19 @@ fn run_boundary_aux_detectors(
     ),
 ) {
     rayon::join(
-        || run_boundary_coverage_detector(graph, config, suppressions),
+        || run_boundary_coverage_detector(input.graph, input.config, input.suppressions),
         || {
             rayon::join(
                 || {
                     run_boundary_call_detector(
-                        graph,
-                        modules,
-                        config,
-                        suppressions,
-                        line_offsets_by_file,
+                        input.graph,
+                        input.modules,
+                        input.config,
+                        input.suppressions,
+                        input.line_offsets_by_file,
                     )
                 },
-                || {
-                    run_policy_detector(
-                        graph,
-                        modules,
-                        config,
-                        declared_deps,
-                        suppressions,
-                        line_offsets_by_file,
-                    )
-                },
+                || run_policy_detector(input),
             )
         },
     )
@@ -2112,16 +2095,7 @@ fn run_boundary_detectors(
                 input.line_offsets_by_file,
             )
         },
-        || {
-            run_boundary_aux_detectors(
-                input.graph,
-                input.modules,
-                input.config,
-                input.declared_deps,
-                input.suppressions,
-                input.line_offsets_by_file,
-            )
-        },
+        || run_boundary_aux_detectors(input),
     )
 }
 

@@ -3749,6 +3749,8 @@ pub enum PolicyRuleKind {
     BannedEffect,
     /// An exported name matched a `banned-export` rule.
     BannedExport,
+    /// A resolved gdp-ts proof factory call occurred outside allowed modules.
+    GdpProofProducer,
 }
 
 /// Effective severity of a single [`PolicyViolation`]. Per-rule `severity`
@@ -3791,7 +3793,8 @@ pub struct PolicyViolation {
     /// What matched: the written callee path for `banned-call` (e.g.
     /// `cp.exec`), the raw import specifier for `banned-import` (e.g.
     /// `moment/locale/nl`), `<effect>: <callee>` for `banned-effect`, or the
-    /// exported name for `banned-export`.
+    /// exported name for `banned-export`. For `gdp-proof-producer`, the canonical
+    /// factory with its JSON-quoted literal label or `...` for a dynamic label.
     pub matched: String,
     /// Effective severity for this finding (per-rule `severity`, else the
     /// `rules."policy-violation"` master).

@@ -1258,6 +1258,7 @@ pub struct SemanticUsage {
     pub declaration_merges: Vec<fallow_types::extract::DeclarationMergeFact>,
     pub(crate) mock_api_reference_spans: MockApiReferenceSpans,
     pub(crate) module_binding_reference_spans: rustc_hash::FxHashSet<Span>,
+    pub(crate) imported_call_reference_spans: rustc_hash::FxHashSet<Span>,
     /// Non-destructured `require()` bindings nothing in the file references.
     /// Moved into `import_binding_usage.unused` by
     /// [`compute_semantic_usage_for_extractor`], which is the layer that knows
@@ -1272,6 +1273,7 @@ pub fn compute_semantic_usage_for_extractor(
     template_used: &rustc_hash::FxHashSet<String>,
 ) -> SemanticUsage {
     let computed_enum_key_spans = extractor.computed_enum_key_reference_spans();
+    let imported_call_candidates = extractor.imported_call_reference_candidates();
     let require_namespace_bindings = extractor.require_namespace_bindings();
     let mut semantic_usage = compute_semantic_usage_with_candidates(
         program,
@@ -1279,9 +1281,13 @@ pub fn compute_semantic_usage_for_extractor(
         &extractor.exports,
         &require_namespace_bindings,
         template_used,
-        &computed_enum_key_spans,
+        SemanticReferenceCandidates {
+            module_bindings: &computed_enum_key_spans,
+            imported_calls: &imported_call_candidates,
+        },
     );
     extractor.resolve_computed_enum_key_uses(&semantic_usage.module_binding_reference_spans);
+    extractor.resolve_imported_call_sites(&semantic_usage.imported_call_reference_spans);
     report_unreferenced_import_equals_bindings(
         &mut semantic_usage,
         &extractor.exported_import_equals_names,
@@ -1324,13 +1330,19 @@ fn report_unreferenced_import_equals_bindings(
     unused.dedup();
 }
 
+#[derive(Clone, Copy)]
+struct SemanticReferenceCandidates<'a> {
+    module_bindings: &'a rustc_hash::FxHashSet<Span>,
+    imported_calls: &'a rustc_hash::FxHashSet<Span>,
+}
+
 fn compute_semantic_usage_with_candidates(
     program: &Program<'_>,
     imports: &[ImportInfo],
     exports: &[ExportInfo],
     require_namespace_bindings: &[String],
     template_used: &rustc_hash::FxHashSet<String>,
-    module_binding_candidates: &rustc_hash::FxHashSet<Span>,
+    candidates: SemanticReferenceCandidates<'_>,
 ) -> SemanticUsage {
     use oxc_semantic::SemanticBuilder;
     use rustc_hash::FxHashSet;
@@ -1385,7 +1397,7 @@ fn compute_semantic_usage_with_candidates(
     let mock_api_reference_spans = compute_mock_api_reference_spans(&semantic, imports, root_scope);
     let declaration_merges = declaration_merge_facts(&semantic);
     let mut module_binding_reference_spans = FxHashSet::default();
-    if !module_binding_candidates.is_empty() {
+    if !candidates.module_bindings.is_empty() {
         for symbol_id in scoping.symbol_ids() {
             if scoping.symbol_scope_id(symbol_id) != root_scope {
                 continue;
@@ -1399,7 +1411,8 @@ fn compute_semantic_usage_with_candidates(
                         else {
                             return None;
                         };
-                        module_binding_candidates
+                        candidates
+                            .module_bindings
                             .contains(&identifier.span)
                             .then_some(identifier.span)
                     }),
@@ -1417,9 +1430,70 @@ fn compute_semantic_usage_with_candidates(
         declaration_merges,
         mock_api_reference_spans,
         module_binding_reference_spans,
+        imported_call_reference_spans: imported_call_reference_spans(
+            &semantic,
+            imports,
+            candidates.imported_calls,
+        ),
         unreferenced_import_equals_bindings: import_equals.unreferenced,
         component_contracts: crate::component_contracts::collect(&semantic, imports, exports),
     }
+}
+
+/// Admit only value references to one actual runtime ESM import declaration.
+fn imported_call_reference_spans(
+    semantic: &oxc_semantic::Semantic<'_>,
+    imports: &[ImportInfo],
+    candidates: &rustc_hash::FxHashSet<Span>,
+) -> rustc_hash::FxHashSet<Span> {
+    let mut spans = rustc_hash::FxHashSet::default();
+    if candidates.is_empty() {
+        return spans;
+    }
+    let scoping = semantic.scoping();
+    for import in imports {
+        if import.is_type_only || import.local_name.is_empty() {
+            continue;
+        }
+        let Some(symbol) = scoping.get_binding(
+            scoping.root_scope_id(),
+            oxc_str::Ident::from(import.local_name.as_str()),
+        ) else {
+            continue;
+        };
+        let mut declarations = scoping.symbol_declarations(symbol);
+        let Some(declaration) = declarations.next() else {
+            continue;
+        };
+        if declarations.next().is_some()
+            || !matches!(
+                semantic.nodes().kind(declaration),
+                AstKind::ImportSpecifier(_)
+                    | AstKind::ImportDefaultSpecifier(_)
+                    | AstKind::ImportNamespaceSpecifier(_)
+            )
+        {
+            continue;
+        }
+        spans.extend(
+            scoping
+                .get_resolved_references(symbol)
+                .filter_map(|reference| {
+                    if !reference.is_value() {
+                        return None;
+                    }
+                    let AstKind::IdentifierReference(identifier) =
+                        semantic.nodes().kind(reference.node_id())
+                    else {
+                        return None;
+                    };
+                    candidates
+                        .contains(&identifier.span)
+                        .then_some(identifier.span)
+                }),
+        );
+    }
+    spans
 }
 
 /// Verdicts [`classify_import_equals_bindings`] reaches per binding name.
@@ -1731,7 +1805,10 @@ pub fn compute_import_binding_usage(
         &[],
         import_equals_bindings,
         template_used,
-        &rustc_hash::FxHashSet::default(),
+        SemanticReferenceCandidates {
+            module_bindings: &rustc_hash::FxHashSet::default(),
+            imported_calls: &rustc_hash::FxHashSet::default(),
+        },
     );
     // The exported form is exempt, exactly as it is on the extractor path, but
     // `export import X = require('./x')` is not a `<script setup>` spelling: no

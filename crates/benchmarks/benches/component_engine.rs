@@ -168,6 +168,8 @@ fn create_guard_fixture() -> GuardFixture {
             specifiers: Vec::new(),
             effects: vec![EffectKind::Network],
             exports: Vec::new(),
+            allowed_files: Vec::new(),
+            proof_kinds: Vec::new(),
             ignore_type_only: false,
             files: vec![format!("src/team-{rule_index}/**")],
             exclude: vec![format!("src/team-{rule_index}/generated/**")],
