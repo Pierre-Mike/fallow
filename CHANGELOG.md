@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.0] - 2026-10-06
+
 ### Added
 
 - **Review optional props omitted by known reachable callers** with
@@ -69,6 +71,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and names the hook as the enforcement layer. `fallow hooks install --target
   agent --agent codex --user` now writes the user gate and no longer writes the project
   `AGENTS.md` block.
+
 - **A new released skill, `fallow-setup`, sets up code-quality tooling.**
   The skill is for a JavaScript or TypeScript project that needs new or
   better quality checks. It tells the agent to detect the existing tools,
@@ -94,6 +97,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   it. `FALLOW_SUGGESTIONS=off` also suppresses it. Claude Code shows the
   prompt only for plugins in an official marketplace, so the hint has no
   effect until that marketplace lists the Fallow plugin.
+
 - **The health JSON names the sections that the run produced, and the
   baseline count of new functions.** The new root array `sections` lists
   each section that the run computed, for example `complexity`, `score`,
@@ -104,6 +108,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   functions above a threshold that the baseline does not accept. It counts
   functions, not baseline entries. `dead-code` and `dupes` do not emit it.
   Both members are additive and optional, and no `schema_version` changes.
+
+- **A built-in `kibana` plugin reads `kibana.jsonc` manifests.** Before,
+  fallow did not know the Kibana plugin entries. The Kibana platform loads
+  a plugin from `public/index.ts` and `server/index.ts`, and no source file
+  imports these files. Thus `fallow dead-code` reported almost all plugin
+  code as unused files. The plugin activates when a `kibana.jsonc` file
+  exists anywhere in the project. For each manifest with `"type": "plugin"`,
+  it adds these entry points:
+  - `public/index.{ts,tsx}` when `plugin.browser` is `true`.
+  - `server/index.{ts,tsx}` when `plugin.server` is `true`.
+  - `common/index.{ts,tsx}`.
+  - The `index.{ts,tsx}` file of each `plugin.extraPublicDirs` directory.
+
+  The plugin also keeps the Scout Playwright files next to each manifest:
+  `test/scout/**/*playwright.config.ts` and the `global.setup.ts` and
+  `global.teardown.ts` files. On a class that implements the Kibana
+  `Plugin`, `PrebootPlugin` or `AsyncPlugin` interface, the `setup`, `start`
+  and `stop` members are used, because the Kibana platform calls them. `@kbn/*` imports already resolve
+  through the pnpm workspaces and the root `tsconfig.json` paths, so no
+  extra config is necessary. You can remove an external `fallow-plugin-kibana.jsonc` file
+  that does the same work. If you keep it, `fallow list --plugins` shows
+  `kibana` two times.
+
+- **Security findings carry their `finding_id` on every surface**
+  (Closes [#3035](https://github.com/fallow-rs/fallow/issues/3035)). The
+  shared analysis pipeline now sets the security `finding_id`, so the CLI,
+  MCP and the LSP report the same id. An LSP security
+  diagnostic sets `data.findingId` next to the existing `security` object,
+  and the VS Code "Copy Fallow finding id" quick fix now shows on a security
+  candidate. The id scheme does not change: `fallow security --format json`
+  and SARIF output stay byte-identical.
+
+- **`fallow dupes` separates symlinked files from copied code.** A clone
+  instance whose path is a symlink, or lies under a symlinked directory, now
+  carries `is_symlink: true` in JSON output, `symlink=true` in compact output
+  and a `(symlink)` marker in human output. The field is omitted when it is
+  `false`. To report only duplication between real files, set
+  `duplicates.ignoreSymlinks: true` or pass `--ignore-symlinks`. A clone group
+  with fewer than two remaining instances is then not reported. Symlinked
+  files then also leave the duplication statistics, so the file and line
+  totals and the `threshold` percentage count only real files.
+  `--no-ignore-symlinks` overrides a config value of `true`. The bare combined
+  run accepts `--dupes-ignore-symlinks` and `--dupes-no-ignore-symlinks`. The
+  MCP `find_dupes` and `trace_clone` tools accept `ignore_symlinks`, and the
+  Code Mode combined helper accepts `dupes_ignore_symlinks`. The Node
+  `detectDuplication` function accepts `ignoreSymlinks`. The default report
+  keeps symlinked instances. Thanks [@lzear](https://github.com/lzear) for
+  the report (Closes [#2961](https://github.com/fallow-rs/fallow/issues/2961)).
+
+- **Editors can override `duplicates.ignoreSymlinks`.** The LSP
+  `initializationOptions.duplication` object accepts `ignoreSymlinks`. The VS
+  Code extension adds the `fallow.duplication.ignoreSymlinks` setting. The
+  setting applies to editor diagnostics and to the sidebar analysis. When the
+  setting is unset, the project config decides. Set it to `false` to report
+  symlinked clone instances when the project config ignores them.
 
 ### Changed
 
@@ -126,13 +185,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `--trace-dependency` called it unused. Now a catalogue entry marked as a
   command-line tool is credited when a package.json script, a CI workflow
   or a git hook runs it, when its own config file exists (a plugin config,
-  a catalogue `config` pattern such as `.jscpd.json`, or a package.json key
+  a catalogue `config` pattern such as `.swcrc`, or a package.json key
   named after the tool), or when a plugin credits it. Catalogue entries
   that are libraries rather than commands, such as `sass` or `jsdom`, keep
   the credit by name, and `--trace-dependency` now reports that credit as
   `known-tooling`, or `known-tooling-config` with the config file. Use
   `ignoreDependencies` for a tool that the project runs in a way fallow
   does not see, such as an editor integration.
+
 - **A `@types/X` devDependency needs a target or ambient globals to count
   as used.** Before, every `@types/` package in `devDependencies` was
   credited by name, so `@types/better-sqlite3` stayed silent in a project
@@ -148,6 +208,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Production dependencies keep the plain credit. A `/// <reference
   types="X" />` directive is not read yet; use `ignoreDependencies` for a
   type package that only such a directive or another global use needs.
+
 - **A plugin credits its own tooling devDependencies only with evidence
   that the project uses the tool.** Before, an active plugin credited every
   package it declares as tooling, and a declared package is enough to
@@ -164,6 +225,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a dependency as used, so the trace agrees with the report. Production
   dependencies keep the plain credit. Use `ignoreDependencies` to keep a
   tooling package that the project runs in a way fallow does not see.
+
 - **The Claude Code gate audits the install root from a subdirectory.**
   Before, the handler ran the gate script from the session directory. A
   session in a package directory then audited only that package and could
@@ -172,10 +234,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   runs the audit there. The walk stops at the first `.git` entry. When it
   finds no script, the handler runs the script under `$CLAUDE_PROJECT_DIR`,
   as before. Run `fallow agent install` again to get the new handler.
+
 - **`fallow hooks install --target agent` no longer selects Codex because of
   `AGENTS.md` alone.** Cursor and fallow also write that file. A `.codex/`
   directory now selects Codex, the same rule that `fallow agent install`
   uses.
+
 - **`fallow health --group-by` counts a clone that spans two groups in each
   group.** Before, a group counted a clone group only when two or more
   instances were inside the group. A clone with one instance in each of two
@@ -187,12 +251,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   one owner, the owner with the most instances. `fallow health --group-by`
   measures the duplicated lines of each group. `fallow health --workspace`
   does not change: it counts only the clones inside the workspace.
+
 - **The release gate refuses a section with a repeated `###` heading.**
   A clean merge can leave two `### Fixed` headings in one version section.
   `scripts/verify-release-metadata.mjs` now fails at dispatch when the
   section of the new version has a `###` heading more than once. The error
   names each heading and its line numbers. The gate does not check
   `[Unreleased]` or sections that shipped before.
+
+- **`fallow health --group-by --top N` applies the limit to each group.**
+  Before, `--top` cut the project lists first, so a small group could show no
+  finding or hotspot. Now each group keeps its own top N findings, hotspots,
+  targets and file scores. The project-level lists do not change.
+
+- **The bundled Fallow skill references are up to date again.** Some fixes
+  went into a second copy of the skill and not into the copy that ships in the
+  npm package. The shipped references now include them:
+  - `fallow license refresh` falls back to a full-access API key
+    (`--api-key` or `FALLOW_API_KEY`). The `token_stale` message tells you to
+    set that key.
+  - The `duplicates` config example uses the `ignore` key, not
+    `ignorePatterns`.
+  - `ignoreDependencies` accepts globs such as `@acme/*`, and `fallow
+    migrate` turns a regex such as `@org/.+` in a migrated config into a
+    glob.
+  - The references describe `fallow trace --path <FROM> <TO>` and `fallow
+    coverage analyze --debug-unmatched`.
+  - The references describe the review fingerprint marker and the
+    diagnostics for unmatched config patterns.
+  - The references describe the match rules for cloud runtime functions.
 
 ### Fixed
 
@@ -287,15 +374,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   root `karma` devDependency. `--trace-dependency` shows that file in
   `tooling_credit`.
 
-- **Playwright entries read every `defineConfig` argument and the default
-  `testDir`.** Playwright merges `defineConfig(a, b, ...)` from left to
-  right. Before, fallow read only one argument, so a test file that a later
-  argument or an imported base config selected was reported as unused. Now
-  the last argument that sets `testDir` or `testMatch` wins. An imported or
-  spread argument keeps every script below `testDir`. A static `testMatch`
-  without `testDir` now applies below the config directory, as Playwright
-  does. Only Playwright adds the test entries of all its configs together.
-  Other test runner plugins keep the entries of the last config, as before.
+- **Playwright entries read every `defineConfig` argument and follow the
+  static `testDir` and `testMatch` settings.** Playwright merges
+  `defineConfig(a, b, ...)` from left to right. Before, fallow read only one
+  argument, so a test file that a later argument or an imported base config
+  selected was reported as unused. Now the last argument that sets `testDir`
+  or `testMatch` wins. An imported or spread argument keeps every script
+  below `testDir`. A static `testMatch` without `testDir` now applies below
+  the config directory, as Playwright does. Only Playwright adds the test
+  entries of all its configs together. Other test runner plugins keep the
+  entries of the last config, as before.
+
+  Helpers outside the configured test directory can now report unused
+  exports. Project overrides inherit top-level settings. Filename matches
+  are case insensitive, and directory names that contain glob characters
+  are read literally. Regular expressions, extglobs and globs with directory
+  components keep all scripts within `testDir`. Unknown project directories
+  keep the conventional test patterns and do not drop the entries of known
+  projects. The graph cache version changes, so entry classifications from
+  older builds are rebuilt.
 
 - **A runtime loader that a tool config loads is no longer an unused
   devDependency.** Jest needs `ts-node` to read `jest.config.ts`, so a
@@ -351,13 +448,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `require.resolve('pkg/lib/tsc')`. Thus it reported `pkg` as an unused
   dependency. Now a specifier with any subpath credits its package: the text
   before the first `/`, or before the second `/` for a scoped package. This
-  includes `require` from `createRequire(import.meta.url)`. A path alias can
+  includes `require` from `createRequire(import.meta.url)`. A bare
+  `import.meta.resolve('pkg')` now credits `pkg` with the same rules as
+  `require.resolve`. A path alias can
   look like a package subpath, and a resolve call does not go through the
   resolver. Thus only a bare package name or `<pkg>/package.json` is an
   unlisted-dependency site, as before. The extraction cache version changes,
   so the first run after the upgrade parses all files again. Thanks to
   [@DrJKL](https://github.com/DrJKL) for the report
   ([#3213](https://github.com/fallow-rs/fallow/issues/3213)).
+
 - **The tsdown and tsup plugins read JSON configs and the `package.json`
   key.** Fallow now reads `entry` from `tsdown.config.json` and from the
   `tsdown` key in the root `package.json`. The tsup plugin now reads
@@ -388,17 +488,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   [@osazemeu](https://github.com/osazemeu) for the report and initial fix
   ([#3201](https://github.com/fallow-rs/fallow/issues/3201),
   [#3202](https://github.com/fallow-rs/fallow/pull/3202)).
-
-- **Playwright entries follow static `testDir` and `testMatch` settings.**
-  Helpers outside the configured test directory can now report unused exports.
-  Project overrides inherit top-level settings, and multiple configs keep
-  each config's test entries. Filename matches are case insensitive, and
-  directory names containing glob characters are treated literally.
-  Regular expressions, extglobs and globs with
-  directory components conservatively keep scripts within `testDir`.
-  Unknown project directories keep conventional test patterns without dropping
-  known projects' entries. The graph cache version increases to invalidate
-  entry classifications from older builds.
 
 - **The health score penalizes hotspots only when their score reaches 50.**
   Previously, the top-one-percent rank bucket could apply the maximum
@@ -499,6 +588,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   access, so renamed (`{ service: local }`) and nested keys also bind to
   their class. The extraction cache version changes, so the first run after
   the upgrade parses all files again.
+
 - **An awaited result of an async class factory credits the class
   members.** Before, `const widget = await makeWidget()` did not bind
   `widget` to the class that `makeWidget` returns. Thus fallow reported
@@ -586,9 +676,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   treats this reference as speculative. A target that exists stays in use,
   and a missing target gives no finding. A `new URL` in other positions,
   such as `new Worker(new URL("./worker.js", import.meta.url))`, still
-  reports a missing file. The extraction cache version changes to 316 and
-  the graph cache version changes to 66, so the first run after the upgrade
-  rebuilds both caches.
+  reports a missing file. The extraction and graph cache versions change,
+  so the first run after the upgrade rebuilds both caches.
 
 - **A relative import into a tsconfig `outDir` resolves to the source file.**
   A script or a test can import the emitted file of a package, for example
@@ -652,6 +741,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   in any function of that scope credits that export, and the other exports
   stay reported. The parse cache version changes, so the first run after the
   upgrade parses all files again.
+
 - **A tsup or tsdown `entry` given as a string or an object map is read.**
   Before, fallow read `entry` only as an array. Thus it ignored
   `entry: "src/index.ts"` and `entry: { main: "src/main.ts" }`, and it
@@ -716,13 +806,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   return stays reported. With `private-type-leaks` on, a private type in
   such a return now also gives a finding. This change invalidates the
   extraction cache.
-
-- **`import.meta.resolve('pkg')` credits the package.** Before, fallow
-  reported a dependency as unused when its only reference was
-  `import.meta.resolve`, for example a package whose URL code gives to a
-  child process. Now `import.meta.resolve` credits a package with the same
-  limits as `require.resolve`. The extraction cache version
-  changes, so the first run after the upgrade parses all files again.
 
 - **A type in a `satisfies` clause on an exported `const` is no longer an
   unused type.** Before, fallow did not read the `satisfies` clause of an
@@ -826,18 +909,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `oxlint.config.ts`. String entries, `{ "specifier": ... }` objects and
   local plugin paths work as they do at the top level.
 
-- **An alias replacement that calls a local path helper resolves.** A Vite,
-  Vitest or webpack config can declare a helper such as
-  `const here = (p) => fileURLToPath(new URL(p, import.meta.url))` and use
-  `replacement: here("src/x.ts")`. Before, fallow did not read this
-  replacement. It reported the alias import as an unlisted dependency and
-  the target file as unused. Now fallow reads a call to a top-level helper in
-  the same file that has one parameter and returns one path expression. It
-  puts the string argument in place of the parameter. The helper can be an
-  arrow function, a function expression or a function declaration. Fallow
-  does not read a helper with more parameters, a default value, a
-  conditional body, or an import binding.
-
 - **Quoted commands that `concurrently` runs count as used.** Before,
   fallow read every argument of `concurrently` as a script name. Thus in
   `concurrently -n api,web "tsx watch src/api.ts" "vite"`, fallow did not
@@ -910,6 +981,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   electron-builder reads these files without `--config`. Now the Electron
   plugin keeps them. `electron-builder.mjs` is not a default name, so fallow
   still reports it when nothing references it.
+
 - **Starlight component overrides and custom CSS in the Astro config are
   used.** Before, fallow did not read the options of the `@astrojs/starlight`
   integration call in `integrations`. Thus it reported the files in
@@ -917,16 +989,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unused dependency. Now a local path in these options is a used file, and a
   package name is a used dependency.
 
-- **A config value that calls a local path helper resolves.** A config can
-  declare a helper such as
-  `const p = (rel) => fileURLToPath(new URL(rel, import.meta.url))` and use
-  `p("./src/entry.ts")` as a value. Before, fallow did not read this call.
+- **A config value that calls a local path helper resolves.** A Vite,
+  Vitest or webpack config can declare a helper such as
+  `const here = (p) => fileURLToPath(new URL(p, import.meta.url))` and use
+  `here("src/entry.ts")` as a value. Before, fallow did not read this call.
   Thus it reported the Vite `build.rollupOptions.input` entry and the
-  `resolve.alias` target as unused files. Now fallow evaluates a call to a
-  module-level helper with one parameter and one returned path expression.
-  The fix applies to all plugins that read entry values and alias
-  replacements with the shared config readers. A helper with more than one
-  parameter, or a helper that calls another helper, still gives no value.
+  `resolve.alias` target as unused files, and an alias import as an
+  unlisted dependency. Now fallow evaluates a call to a top-level helper in
+  the same file that has one parameter and returns one path expression. It
+  puts the string argument in place of the parameter. The helper can be an
+  arrow function, a function expression or a function declaration. The fix
+  applies to all plugins that read entry values and alias replacements with
+  the shared config readers. Fallow does not read a helper with more
+  parameters, a default value, a conditional body or an import binding, or
+  a helper that calls another helper.
 
 - **Vercel functions in the `api/` directory are entry points.** Vercel
   deploys each file under `api/` as a serverless function, and no code
@@ -938,6 +1014,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The plugin now also activates when `vercel.json` exists at the package
   root. Before, it activated only from a `vercel` or `@vercel/config`
   dependency.
+
 - **A CI step that runs a file with Bun makes that file an entry point.**
   Before, fallow read `bun scripts/a.ts`, `bun run scripts/a.ts` and
   `bun --watch scripts/a.ts` in a GitHub Actions or GitLab CI step as a
@@ -946,6 +1023,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   script has the name and the argument is a script file path, the file is
   an entry point. A name without a script file extension, such as
   `bun run build`, still resolves to the script.
+
 - **Next.js `instant` and `prefetch` segment config exports are used.**
   Next.js 16 reads `export const instant` and `export const prefetch` from
   App Router pages and layouts. It also reads
@@ -955,6 +1033,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `unstable_dynamicStaleTime` in `page` files only. Next.js rejects
   `unstable_dynamicStaleTime` in a layout, so fallow still reports it there.
   Route handlers do not change.
+
 - **The Vite `root` option now moves the default entries.** Before, fallow
   looked for `index.html`, `src/main.*` and `src/index.*` only in the config
   directory. Thus with `root: './web'`, it reported the scripts that
@@ -962,6 +1041,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fallow reads `root` and adds the same entries under that directory. It
   resolves `root` against the config directory, and it reads the path
   helpers `resolve`, `join` and `fileURLToPath(new URL(...))`.
+
 - **A file that a command substitution runs is an entry point.** Before,
   fallow did not read the commands inside `$(...)` or backticks in
   package.json scripts and CI steps. Thus a script such as
@@ -999,6 +1079,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   valid JSONC. Now fallow reads `deno.json` and `deno.jsonc` with the same
   loose rules as Deno. The fallow config and `tsconfig.json` keep the strict
   JSONC rules.
+
 - **A malformed config in the `extends` chain of `tsconfig.json` gives a
   `malformed-tsconfig` diagnostic.** Before, fallow skipped a parent config
   that did not parse, for example a `base.json` with a missing comma, and
@@ -1006,12 +1087,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unused files and unresolved imports. Now `workspace_diagnostics[]` has a
   `malformed-tsconfig` entry with the path of the parent config and the
   parser message, and fallow prints the same warning on stderr.
+
 - **A CODEOWNERS pattern without a trailing `/` now owns the directory
   contents.** GitHub CODEOWNERS uses gitignore semantics. Thus `/docs @team`
   matches a file `docs` or all files below the `docs/` directory. Before,
   fallow matched only the exact path. A project that writes all rules in this
-  form, for example Kibana, got all files in `(unowned)` with `--group-by
-  owner`. The fix applies to all CODEOWNERS consumers: `--group-by owner` and
+  form got all files in `(unowned)` with `--group-by owner`. The fix applies to all CODEOWNERS consumers: `--group-by owner` and
   `--group-by section`, the ownership signals, the `unowned-hotspot` finding,
   and the audit ownership facts. Last-match-wins and GitLab `!path`
   exclusions keep their order. Two related changes also follow GitHub:
@@ -1019,12 +1100,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   only, and `apps/` matches an `apps` directory at any depth. For the same
   reason, `/*` owns only the files at the repository root. Use `*` for a
   catch-all rule.
+
 - **A root `link:` or `file:` dependency on a local package now makes that
-  package a workspace.** Older yarn monorepos, such as Kibana before its move
-  to pnpm, have no `workspaces` field. The root `package.json` lists each
-  package as `"@kbn/foo": "link:packages/foo"`, often three to five
-  directories deep. Before, fallow did not find these packages. Without
-  tsconfig `paths`, an import of `@kbn/foo` resolved as an external package,
+  package a workspace.** Some older yarn monorepos have no `workspaces`
+  field. The root `package.json` lists each package as
+  `"@acme/foo": "link:packages/foo"`, often three to five directories deep.
+  Before, fallow did not find these packages. Without tsconfig `paths`, an
+  import of `@acme/foo` resolved as an external package,
   and the files of the package became unused files. Now each `link:` or
   `file:` target inside the project root that holds a `package.json` is a
   workspace. This applies in every repository, also in a repository with a
@@ -1040,6 +1122,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   report the entry as an unused dependency. When a workspace pattern or a
   tsconfig reference also declares the package, fallow reports an unused
   entry, as before.
+
 - **A failed run now says which gate set exit code 1.** Before, `fallow
   health --format json --quiet` exited 1 for a complexity finding and printed
   nothing on stderr. The `complexity-*` rules default to `error`, so one
@@ -1069,6 +1152,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A bare human run with `--fail-on-regression` prints the regression
   outcome once.** Before, the dead-code section and the end of the run both
   printed the `Regression detected` line.
+
 - **`fallow health --group-by` can select groups and track a trend per
   group.** These additions serve CI jobs that report health per CODEOWNERS
   team:
@@ -1100,6 +1184,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     findings block per group. The human
     table gets `crit` and `trend` columns. `fallow report --from` renders the
     same job summary from a saved grouped envelope.
+
 - **A grouped `fallow health --score` run no longer shows group findings
   that the project section does not show.** Before, each group in the JSON
   envelope carried `findings` and `file_scores`, and the Markdown and job
@@ -1114,6 +1199,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   accepts every finding stays clean. The human output already gave this
   number. The job summary also has a blank line before `## Health by <mode>`
   now.
+
 - **The job summary of `fallow health --hotspots`, `--file-scores` or
   `--targets` with a `--baseline` no longer says that no function exceeds a
   threshold.** These runs do not list complexity findings. Before, the job
@@ -1173,15 +1259,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   such a signal the credit stays. This can report new unused workspace
   dependencies.
 
-### Changed
-
-- **`fallow health --group-by --top N` applies the limit to each group.**
-  Before, `--top` cut the project lists first, so a small group could show no
-  finding or hotspot. Now each group keeps its own top N findings, hotspots,
-  targets and file scores. The project-level lists do not change.
-
-### Fixed
-
 - **`fallow health --save-snapshot --trend` no longer compares a run with its
   own snapshot.** Before, with the default `.fallow/snapshots/` directory,
   the run saved the snapshot first and then read the newest snapshot as the
@@ -1196,8 +1273,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   counted each import statement, so two imports in one file counted as two.
   Now the lens counts distinct importing files, and the hover uses the same
   count. An export without importers gets no lens, because the unused-export
-  diagnostic already reports it. Thanks @danielo515 for the report. Refs
-  #3064.
+  diagnostic already reports it. Thanks [@danielo515](https://github.com/danielo515)
+  for the report ([#3064](https://github.com/fallow-rs/fallow/issues/3064)).
+
 - **`fallow watch` no longer stops on a change outside a nested
   `.gitignore` directory.** Before, a project with a `.gitignore` file in a
   subdirectory, for example `packages/web/.gitignore`, crashed the watch
@@ -1205,6 +1283,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rules of `packages/pkg/.gitignore` applied to files in
   `packages/pkg-extra`. Now each nested `.gitignore` file applies only to
   the files in its own directory tree.
+
 - **The VS Code extension downloads a musl binary on a musl Linux host.** On a
   host such as Alpine, for example a remote container, the managed download
   fetched the glibc binary of `fallow` and `fallow-lsp`, which does not start
@@ -1221,6 +1300,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and it did not contain value options such as `--max-file-size`,
   `--output-file` and `--coverage`. Now fallow reads this list from the CLI
   definition.
+
 - **`fallow security` and `fallow similar-code` reject every `--dupes-*`
   override.** Before, `fallow security --dupes-near` and `fallow similar-code
   --dupes-ignore-symlinks` (or `--dupes-no-ignore-symlinks`) ran and ignored
@@ -1228,6 +1308,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with the same "is not valid with" error as the other `--dupes-*` flags.
   `fallow security --help` also hides `--dupes-near`,
   `--dupes-no-ignore-imports` and the `--dupes-*-ignore-symlinks` pair.
+
 - **The dependency-override checks skip `pnpm.overrides` in `package.json`
   on pnpm 11 and later.** pnpm 11 does not read the `pnpm` field in
   `package.json` and ignores its `overrides`. Before,
@@ -1236,6 +1317,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   field when the root `packageManager` field names `pnpm@11` or later. pnpm
   10 and earlier, and projects without a pnpm version, keep the old
   behavior. The catalog checks already use this version rule.
+
 - **The override and catalog checks skip the `pnpm-workspace.yaml`
   overrides that pnpm 10 ignores.** pnpm 10 merges `pnpm.overrides` and
   `resolutions` from the root `package.json`. When this merged map has an
@@ -1250,6 +1332,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   entries. An empty `pnpm.overrides` or `resolutions` object does not change
   the result. Projects without a pnpm version and pnpm 11 and later keep the
   old behavior.
+
 - **The override and catalog checks skip the `pnpm-workspace.yaml`
   overrides on pnpm versions before 10.5.1.** pnpm 9 and pnpm 10.0.0 to
   10.5.0 do not read the `overrides` section of `pnpm-workspace.yaml`. pnpm
@@ -1264,6 +1347,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   help on these versions. A prerelease comes before its release, so
   `pnpm@10.0.0-rc.3` is before 10.5.1. A version without a minor or patch,
   such as `pnpm@10`, keeps the old behavior.
+
 - **`unused-dependency-overrides` stops when `package-lock.json` or
   `npm-shrinkwrap.json` does not parse.** Before, an npm lockfile with
   unresolved merge-conflict markers gave an empty package set. When it was the
@@ -1275,6 +1359,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   different lockfile that parses still gives the analysis its data, so the
   check continues. An npm lockfile that fallow cannot read, for example with
   bytes that are not UTF-8, counts as one that does not parse.
+
 - **`unused-dependency-overrides` stops when `pnpm-lock.yaml` does not
   parse.** Before, a lockfile with unresolved merge-conflict markers gave an
   empty package set. fallow then reported overrides for transitive-only
@@ -1285,6 +1370,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   parses still gives the analysis its data, so the check continues. A
   `package-lock.json` or `npm-shrinkwrap.json` that does not parse no longer
   counts as that data.
+
 - **The missing API key message names the cloud command that ran.**
   `fallow coverage review-packet` and `fallow coverage deployment-changes`
   showed a `fallow coverage analyze --cloud` example when `FALLOW_API_KEY` was
@@ -1292,6 +1378,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `get_cloud_review_packet` and `get_cloud_deployment_changes` show the same
   text as the CLI. The JSON error fields `error`, `message` and `exit_code`
   do not change.
+
 - **A `catalog:` value in a pnpm override counts as a catalog reference.**
   Before, `unused-catalog-entries` reported a catalog entry as unused when
   the only reference was an override such as `is-number: "catalog:"` or
@@ -1310,8 +1397,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `"parent>child": "catalog:x"` uses the `child` entry of catalog `x`.
   `unresolved-catalog-references` also reports an override that names a
   catalog without that package, because `pnpm install` fails on it. The
-  finding points to the line of the override. Thanks @PrinceD96 for the
-  report (Fixes #3078).
+  finding points to the line of the override. Thanks
+  [@PrinceD96](https://github.com/PrinceD96) for the report (Closes
+  [#3078](https://github.com/fallow-rs/fallow/issues/3078)).
 
 - **`fallow dupes --fail-on-issues` and `--ci` exit 1 when clone groups are
   found.** Before, `dupes` accepted both flags and still exited 0, and so did
@@ -1325,14 +1413,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   project has clone groups. To keep a job that only reports, use
   `--format sarif --quiet` in place of `--ci`, or gate with `--threshold`.
   The GitHub Action and the GitLab template already failed such a job, so
-  their result does not change. Thanks @TiagoGranelli for the report (#2984).
+  their result does not change. Thanks
+  [@TiagoGranelli](https://github.com/TiagoGranelli) for the report (Closes
+  [#2984](https://github.com/fallow-rs/fallow/issues/2984)).
 
 - **`overrides[].rules` apply to security candidates.** A per-path
   `security-sink` or `security-client-server-leak` entry had no effect on
   `fallow security`. Now each candidate takes the severity of its rule for its
   own path, with the same `overrides` matching as dead-code findings. An
   override matches the file that the candidate is anchored on: the sink site,
-  or the `"use client"` file for a client-server leak (#2985).
+  or the `"use client"` file for a client-server leak. Thanks
+  [@TiagoGranelli](https://github.com/TiagoGranelli) for the report (Closes
+  [#2985](https://github.com/fallow-rs/fallow/issues/2985)).
   - `off` removes the candidates in matching files. This also applies when
     `fallow security` raises the top-level `off` to `warn`.
   - `error` makes `fallow security` exit 1 when a candidate in a matching
@@ -1345,80 +1437,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - The JSON `config.rules` block of `fallow security` still reports the
     top-level `configured` and `effective` severities. An override can drop
     candidates or fail the run also when `effective` is `warn`.
-
-### Added
-
-- **A built-in `kibana` plugin reads `kibana.jsonc` manifests.** Before,
-  fallow did not know the Kibana plugin entries. The Kibana platform loads
-  a plugin from `public/index.ts` and `server/index.ts`, and no source file
-  imports these files. Thus `fallow dead-code` reported almost all plugin
-  code as unused files. The plugin activates when a `kibana.jsonc` file
-  exists anywhere in the project. For each manifest with `"type": "plugin"`,
-  it adds these entry points:
-  - `public/index.{ts,tsx}` when `plugin.browser` is `true`.
-  - `server/index.{ts,tsx}` when `plugin.server` is `true`.
-  - `common/index.{ts,tsx}`.
-  - The `index.{ts,tsx}` file of each `plugin.extraPublicDirs` directory.
-
-  The plugin also keeps the Scout Playwright files next to each manifest:
-  `test/scout/**/*playwright.config.ts` and the `global.setup.ts` and
-  `global.teardown.ts` files. On a class that implements the Kibana
-  `Plugin`, `PrebootPlugin` or `AsyncPlugin` interface, the `setup`, `start`
-  and `stop` members are used, because the Kibana platform calls them. `@kbn/*` imports already resolve
-  through the pnpm workspaces and the root `tsconfig.json` paths, so no
-  extra config is necessary. You can remove an external `fallow-plugin-kibana.jsonc` file
-  that does the same work. If you keep it, `fallow list --plugins` shows
-  `kibana` two times.
-
-- **Security findings carry their `finding_id` on every surface**
-  (Closes [#3035](https://github.com/fallow-rs/fallow/issues/3035)). The
-  shared analysis pipeline now sets the security `finding_id`, so the CLI,
-  MCP and the LSP report the same id. An LSP security
-  diagnostic sets `data.findingId` next to the existing `security` object,
-  and the VS Code "Copy Fallow finding id" quick fix now shows on a security
-  candidate. The id scheme does not change: `fallow security --format json`
-  and SARIF output stay byte-identical.
-
-- **`fallow dupes` separates symlinked files from copied code.** A clone
-  instance whose path is a symlink, or lies under a symlinked directory, now
-  carries `is_symlink: true` in JSON output, `symlink=true` in compact output
-  and a `(symlink)` marker in human output. The field is omitted when it is
-  `false`. To report only duplication between real files, set
-  `duplicates.ignoreSymlinks: true` or pass `--ignore-symlinks`. A clone group
-  with fewer than two remaining instances is then not reported. Symlinked
-  files then also leave the duplication statistics, so the file and line
-  totals and the `threshold` percentage count only real files.
-  `--no-ignore-symlinks` overrides a config value of `true`. The bare combined
-  run accepts `--dupes-ignore-symlinks` and `--dupes-no-ignore-symlinks`. The
-  MCP `find_dupes` and `trace_clone` tools accept `ignore_symlinks`, and the
-  Code Mode combined helper accepts `dupes_ignore_symlinks`. The Node
-  `detectDuplication` function accepts `ignoreSymlinks`. The default report
-  keeps symlinked instances
-  ([#2961](https://github.com/fallow-rs/fallow/issues/2961)).
-- **Editors can override `duplicates.ignoreSymlinks`.** The LSP
-  `initializationOptions.duplication` object accepts `ignoreSymlinks`. The VS
-  Code extension adds the `fallow.duplication.ignoreSymlinks` setting. The
-  setting applies to editor diagnostics and to the sidebar analysis. When the
-  setting is unset, the project config decides. Set it to `false` to report
-  symlinked clone instances when the project config ignores them.
-
-### Changed
-
-- **The bundled Fallow skill references are up to date again.** Some fixes
-  went into a second copy of the skill and not into the copy that ships in the
-  npm package. The shipped references now include them:
-  - `fallow license refresh` falls back to a full-access API key
-    (`--api-key` or `FALLOW_API_KEY`). The `token_stale` message tells you to
-    set that key.
-  - The `duplicates` config example uses the `ignore` key, not
-    `ignorePatterns`.
-  - `ignoreDependencies` accepts globs such as `@acme/*`, and `fallow
-    migrate` turns a knip regex such as `@org/.+` into a glob.
-  - The references describe `fallow trace --path <FROM> <TO>` and `fallow
-    coverage analyze --debug-unmatched`.
-  - The references describe the review fingerprint marker and the
-    diagnostics for unmatched config patterns.
-  - The references describe the match rules for cloud runtime functions.
 
 ### Performance
 
@@ -13127,7 +13145,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `--changed-since` and `--fail-on-issues` for CI
 - Cross-workspace resolution for npm/yarn/pnpm workspaces
 
-[unreleased]: https://github.com/fallow-rs/fallow/compare/v3.31.0...HEAD
+[unreleased]: https://github.com/fallow-rs/fallow/compare/v3.32.0...HEAD
+[3.32.0]: https://github.com/fallow-rs/fallow/compare/v3.31.0...v3.32.0
 [3.31.0]: https://github.com/fallow-rs/fallow/compare/v3.30.0...v3.31.0
 [3.30.0]: https://github.com/fallow-rs/fallow/compare/v3.29.0...v3.30.0
 [3.29.0]: https://github.com/fallow-rs/fallow/compare/v3.28.0...v3.29.0
