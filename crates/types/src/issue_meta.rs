@@ -1347,8 +1347,8 @@ pub const ISSUE_RESULT_META: &[IssueResultMeta] = &[
     },
     IssueResultMeta {
         code: "policy-violation",
-        sarif_description: "Banned usage matched a rule-pack rule",
-        meta_description: "A call site, import, or catalogue-derived effect matched a configured rule pack rule.",
+        sarif_description: "Usage violates a configured rule-pack policy",
+        meta_description: "A call, import, export, catalogue-derived effect, or graph-resolved GDP proof producer violates a configured rule pack rule.",
         meta_docs_path: "explanations/dead-code#policy-violations",
         meta_name: "Policy Violation",
         summary_label: "Policy violations",

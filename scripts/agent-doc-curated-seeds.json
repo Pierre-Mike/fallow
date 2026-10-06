@@ -774,7 +774,7 @@
       "section": "flags:dead-code-filters",
       "row": "--policy-violations",
       "column": "Issue Type",
-      "seed": "Banned usage matched a rule-pack rule"
+      "seed": "Usage violates a configured rule-pack policy"
     },
     {
       "section": "flags:dead-code-filters",
@@ -2160,7 +2160,7 @@
       "section": "issue-types",
       "row": "policy-violation",
       "column": "Description",
-      "seed": "Banned usage matched a rule-pack rule; Requires a configured rule pack (rulePacks config)"
+      "seed": "Usage violates a configured rule-pack policy; Requires a configured rule pack (rulePacks config)"
     },
     {
       "section": "issue-types",

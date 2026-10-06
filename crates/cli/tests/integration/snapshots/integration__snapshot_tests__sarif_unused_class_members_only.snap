@@ -315,10 +315,10 @@ expression: redact_sarif_version(&json_str)
             {
               "id": "fallow/policy-violation",
               "shortDescription": {
-                "text": "Banned usage matched a rule-pack rule"
+                "text": "Usage violates a configured rule-pack policy"
               },
               "fullDescription": {
-                "text": "A call site, import, or catalogue-derived effect matched a rule from a configured rule pack (the rulePacks config key). Packs are pure declarative data; the check is syntactic, call and effect matching use written plus import-resolved canonical callees, and import matching uses the raw specifier. Replace the banned usage per the rule's message, scope the rule with files/exclude globs, or adjust its severity."
+                "text": "A call, import, export, catalogue-derived effect, or graph-resolved GDP proof producer violates a configured rule pack (the rulePacks config key). Packs are pure declarative data. Call and effect rules use written plus import-resolved canonical callees; import rules match the raw specifier. GDP rules trace @gdp-ts/core proof producers through unambiguous re-exports and restrict which files may create proof factories, optionally by exact static proof kind. This is syntactic ownership analysis, not a runtime authorization guarantee. Follow the rule's message, move a producer into an allowed file, scope the rule with files/exclude globs, or adjust its severity."
               },
               "helpUri": "https://fallow.tools/docs/explanations/dead-code/#policy-violations",
               "defaultConfiguration": {
