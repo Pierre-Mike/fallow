@@ -1332,6 +1332,12 @@ jobs:
         with:
           toolchain: '1.96.0'
           cache-key: msrv
+      # Cargo 1.96.0 does not retry spurious registry HTTP errors. Fetch with
+      # patched Cargo, then keep the exact minimum compiler check offline.
+      - name: Fetch locked dependencies with patched Cargo
+        run: |
+          rustup toolchain install 1.96.1 --profile minimal --no-self-update
+          cargo +1.96.1 fetch --locked
       - name: Verify published crate MSRV metadata
         run: |
           cargo metadata --no-deps --format-version 1 | jq -e --arg msrv "1.96" '
@@ -1341,7 +1347,7 @@ jobs:
             | length > 0 and all(. == $msrv)
           '
       - name: Check compilation
-        run: cargo check --workspace
+        run: cargo check --workspace --locked --offline
 
   miri-runner:
     name: Select Miri runner
