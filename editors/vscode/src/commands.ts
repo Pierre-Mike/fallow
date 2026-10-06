@@ -1127,8 +1127,9 @@ export const resetHealthNoWorkspaceWarning = (): void => {
  * Run a standalone `fallow health` analysis for the Health view. This is a
  * separate spawn from {@link runAnalysis}, fired lazily only when the Health
  * view is first revealed, so it never slows the latency-critical combined run
- * (which keeps `--skip health`). Hotspots (a git-churn walk) are requested only
- * when the user opted in via `fallow.health.hotspots`.
+ * (which keeps `--skip health`). The hotspot section follows
+ * `fallow.health.hotspots`; refactoring targets still read git history when
+ * that section is hidden.
  *
  * Reuses the same binary resolution and spawn primitive as the combined run.
  * `execFallow` already tolerates exit 0/1 (health exits 1 when findings exist)
