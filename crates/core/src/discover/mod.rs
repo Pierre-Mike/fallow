@@ -14,10 +14,10 @@ pub use entry_points::{
     discover_entry_points, discover_plugin_entry_point_sets, discover_plugin_entry_points,
 };
 pub(crate) use entry_points::{
-    EntryPointDiscovery, ScriptWorkspaces, collect_workspace_packages,
+    DiscoveredPaths, EntryPointDiscovery, ScriptWorkspaces, collect_workspace_packages,
     discover_plugin_entry_point_sets_timed, discover_root_entry_points,
-    discover_workspace_package_entry_points, resolve_entry_path, warn_skipped_entry_summary,
-    workspace_runtime_script_seeds,
+    discover_workspace_package_entry_points, resolve_entry_path_with_discovered,
+    warn_skipped_entry_summary, workspace_runtime_script_seeds,
 };
 pub use fallow_types::discover::{DiscoveredFile, EntryPoint, EntryPointSource, FileId};
 pub(crate) use infrastructure::discover_infrastructure_entry_points;
