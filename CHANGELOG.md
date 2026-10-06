@@ -196,6 +196,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Rule-pack explanations include GDP proof factory ownership and banned
+  exports.** The CLI explanation and published skill catalogue describe the
+  supported policies and how to correct producer ownership.
+- **The check-wait helper recognizes successful replacements of canceled
+  matrix jobs whose names change after expansion.** It verifies workflow and
+  commit identity plus the replacement's current success before retiring an
+  older cancellation. Current blockers and minimum-check guards remain active.
+
 - **`fallow health --format markdown` with groups shows project-relative paths on
   Windows.** The finding rows of a grouped health report showed the absolute
   path, such as `D:/repo/src/a.ts`, because the project root used backslashes

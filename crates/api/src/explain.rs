@@ -218,8 +218,8 @@ pub const CHECK_RULES: &[RuleDef] = &[
         id: "fallow/policy-violation",
         category: "Policy",
         name: "Policy Violation",
-        short: "Banned usage matched a rule-pack rule",
-        full: "A call site, import, or catalogue-derived effect matched a rule from a configured rule pack (the rulePacks config key). Packs are pure declarative data; the check is syntactic, call and effect matching use written plus import-resolved canonical callees, and import matching uses the raw specifier. Replace the banned usage per the rule's message, scope the rule with files/exclude globs, or adjust its severity.",
+        short: "Usage violates a configured rule-pack policy",
+        full: "A call, import, export, catalogue-derived effect, or graph-resolved GDP proof producer violates a configured rule pack (the rulePacks config key). Packs are pure declarative data. Call and effect rules use written plus import-resolved canonical callees; import rules match the raw specifier. GDP rules trace @gdp-ts/core proof producers through unambiguous re-exports and restrict which files may create proof factories, optionally by exact static proof kind. This is syntactic ownership analysis, not a runtime authorization guarantee. Follow the rule's message, move a producer into an allowed file, scope the rule with files/exclude globs, or adjust its severity.",
         docs_path: "explanations/dead-code#policy-violations",
     },
     RuleDef {
@@ -807,7 +807,7 @@ fn architecture_rule_guide(id: &str) -> Option<RuleGuide> {
         },
         "fallow/policy-violation" => RuleGuide {
             example: "src/app.ts imports moment while a rule pack bans the moment specifier with the message 'Use date-fns.'",
-            how_to_fix: "Replace the banned call, import, or effectful usage with the alternative named in the rule's message. To waive one rule, use `// fallow-ignore-next-line policy-violation:<pack>/<rule-id>` or the file-level form. Use bare `policy-violation` only when you intend to suppress every rule-pack finding at that scope.",
+            how_to_fix: "Follow the rule's message to replace banned usage or remove a banned export. For a GDP proof producer, move proof factory creation into an allowed file, or correct the rule's allowedFiles and optional proofKinds if the ownership policy was wrong. To waive one rule, use `// fallow-ignore-next-line policy-violation:<pack>/<rule-id>` or the file-level form. Use bare `policy-violation` only when you intend to suppress every rule-pack finding at that scope.",
         },
         "fallow/stale-suppression" => RuleGuide {
             example: "// fallow-ignore-next-line unused-export remains above an export that is now used.",

@@ -900,7 +900,7 @@
       "rule_id": "fallow/policy-violation",
       "command": "dead-code",
       "category": "Policy",
-      "description": "Banned usage matched a rule-pack rule",
+      "description": "Usage violates a configured rule-pack policy",
       "label": "Policy Violations",
       "config_key": "policy-violation",
       "registry_index": 24,

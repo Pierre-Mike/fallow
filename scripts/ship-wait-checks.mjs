@@ -361,11 +361,96 @@ const worstCheck = (checks) =>
   checks.find(({ bucket }) => bucket === "cancel") ??
   checks[0];
 
+const supersededCancellations = (rollup, checks, readRun, names) => {
+  const removed = new Set();
+  // A replacement with a different job name cannot satisfy a required check.
+  if (readRun === null || names !== null) {
+    return { ok: true, removed };
+  }
+  const workflows = new Map();
+  for (const [index, entry] of rollup.entries()) {
+    if (
+      entry.__typename !== "CheckRun" ||
+      typeof entry.workflowName !== "string" ||
+      entry.workflowName === ""
+    ) {
+      continue;
+    }
+    const group = workflows.get(entry.workflowName) ?? [];
+    group.push(index);
+    workflows.set(entry.workflowName, group);
+  }
+  for (const group of workflows.values()) {
+    if (
+      !group.some((index) => checks[index].bucket === "cancel") ||
+      !group.some((index) => checks[index].bucket === "pass") ||
+      new Set(group.map((index) => checks[index].name)).size < 2
+    ) {
+      continue;
+    }
+    const identities = new Map();
+    for (const index of group) {
+      const result = readRun(rollup[index].detailsUrl);
+      if (!result.ok) {
+        return result;
+      }
+      if (result.run === null) {
+        continue;
+      }
+      const key = JSON.stringify([result.run.workflowId, result.run.head]);
+      const runs = identities.get(key) ?? [];
+      runs.push({ index, ...result.run });
+      identities.set(key, runs);
+    }
+    for (const runs of identities.values()) {
+      const newest = Math.max(...runs.map(({ createdAt }) => createdAt));
+      const latest = runs.filter(({ createdAt }) => createdAt === newest);
+      const runIds = new Set(latest.map(({ id }) => id));
+      if (
+        runIds.size !== 1 ||
+        latest[0].id === undefined ||
+        !latest.some(({ index }) => checks[index].bucket === "pass") ||
+        latest.some(({ index }) => !["pass", "skipping"].includes(checks[index].bucket))
+      ) {
+        continue;
+      }
+      // Matrix expansion can rename every job. Only a completed successful
+      // workflow proves replacement; a newer skipped label event does not.
+      const replacement = readRun(rollup[latest[0].index].detailsUrl, { fresh: true });
+      if (!replacement.ok) {
+        return replacement;
+      }
+      if (
+        replacement.run?.id !== latest[0].id ||
+        replacement.run?.createdAt !== newest ||
+        replacement.run?.workflowId !== latest[0].workflowId ||
+        replacement.run?.head !== latest[0].head ||
+        replacement.run?.status !== "completed" ||
+        replacement.run?.conclusion !== "success"
+      ) {
+        continue;
+      }
+      for (const { index, createdAt } of runs) {
+        if (createdAt < newest && checks[index].bucket === "cancel") {
+          removed.add(index);
+        }
+      }
+    }
+  }
+  return { ok: true, removed };
+};
+
 const currentRollupChecks = (rollup, readRun, names) => {
   const checks = rollup.map(rollupCheck);
+  const superseded = supersededCancellations(rollup, checks, readRun, names);
+  if (!superseded.ok) {
+    return superseded;
+  }
+  const removed = superseded.removed;
   const groups = new Map();
   for (const [index, entry] of rollup.entries()) {
     if (
+      removed.has(index) ||
       entry.__typename !== "CheckRun" ||
       typeof entry.workflowName !== "string" ||
       entry.workflowName === "" ||
@@ -378,7 +463,6 @@ const currentRollupChecks = (rollup, readRun, names) => {
     group.push(index);
     groups.set(key, group);
   }
-  const removed = new Set();
   for (const group of groups.values()) {
     if (group.length < 2) {
       continue;
@@ -439,7 +523,8 @@ const currentRollupChecks = (rollup, readRun, names) => {
 /**
  * Read the authoritative current-head checks returned by `gh pr view`.
  * Optional `readRun(url)` supplies workflow identity and creation metadata
- * for duplicate checks; `names` limits the checks to the required selection.
+ * for duplicate or canceled workflow checks; `{ fresh: true }` also requests
+ * current run status. `names` limits checks to the required selection.
  */
 export const parseGhPrRollup = (
   { error, status, stdout, stderr },
@@ -472,14 +557,14 @@ export const parseGhPrRollup = (
 
 const ghRunMetadataReader = () => {
   const cached = new Map();
-  return (detailsUrl) => {
+  return (detailsUrl, { fresh = false } = {}) => {
     const match = typeof detailsUrl === "string" ? GITHUB_RUN_URL_PATTERN.exec(detailsUrl) : null;
     if (match === null) {
       return { ok: true, run: null };
     }
     const [, owner, repo, id] = match;
     const endpoint = `repos/${owner}/${repo}/actions/runs/${id}`;
-    if (cached.has(endpoint)) {
+    if (!fresh && cached.has(endpoint)) {
       return { ok: true, run: cached.get(endpoint) };
     }
     const result = spawnSync("gh", ["api", endpoint, "--hostname", "github.com"], {
@@ -508,9 +593,12 @@ const ghRunMetadataReader = () => {
     ) {
       return { ok: false, error: "gh printed invalid workflow-run metadata" };
     }
-    const run = { createdAt, workflowId: data.workflow_id, head: data.head_sha };
+    const run = { id: endpoint, createdAt, workflowId: data.workflow_id, head: data.head_sha };
     cached.set(endpoint, run);
-    return { ok: true, run };
+    return {
+      ok: true,
+      run: fresh ? { ...run, status: data.status, conclusion: data.conclusion } : run,
+    };
   };
 };
 

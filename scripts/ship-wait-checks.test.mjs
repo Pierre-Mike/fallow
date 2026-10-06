@@ -404,6 +404,127 @@ const attempt = (
   detailsUrl: `${RUN_URL}/${run}/job/1`,
 });
 
+const matrixReplacement = () => {
+  const runs = workflowRuns();
+  Object.assign(runs[`${RUN_ENDPOINT}/${NEWER_RUN}`], {
+    status: "completed",
+    conclusion: "success",
+  });
+  return {
+    selected: [],
+    runs,
+    rollups: [
+      {
+        statusCheckRollup: [
+          {
+            ...attempt("CANCELLED", EARLIER_START, "Benchmarks"),
+            name: "Simulation (${{ matrix.label }})",
+          },
+          { ...attempt("SUCCESS", NEWER_START, "Benchmarks"), name: "Simulation (Linux)" },
+          { ...attempt("SUCCESS", NEWER_START, "Benchmarks"), name: "Simulation (macOS)" },
+        ],
+      },
+    ],
+  };
+};
+
+test("a successful replacement retires a canceled matrix placeholder", fakeGhOptions, () => {
+  for (const names of [null, ["Simulation (Linux)", "Simulation (macOS)"]]) {
+    const fixture = matrixReplacement();
+    fixture.selected = (names ?? []).map((name) => check(name, "pass"));
+    const result = runWithFakeGh(fixture, names === null ? [] : ["--required"]);
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+  }
+});
+
+test(
+  "required mode retains a canceled placeholder even with selected replacement jobs",
+  fakeGhOptions,
+  () => {
+    for (const replacements of [[], [check("Simulation (Linux)", "pass")]]) {
+      const fixture = matrixReplacement();
+      fixture.selected = [check("Simulation (${{ matrix.label }})", "cancel"), ...replacements];
+      const result = runWithFakeGh(fixture, ["--required"]);
+      assert.equal(result.status, 1, result.stdout + result.stderr);
+    }
+  },
+);
+
+test("renamed matrix jobs retain current failures and cancellations", fakeGhOptions, () => {
+  for (const [status, conclusion] of [
+    ["COMPLETED", "FAILURE"],
+    ["COMPLETED", "CANCELLED"],
+  ]) {
+    const fixture = matrixReplacement();
+    Object.assign(fixture.rollups[0].statusCheckRollup[1], { status, conclusion });
+    const result = runWithFakeGh(fixture);
+    assert.equal(result.status, 1, result.stdout + result.stderr);
+  }
+});
+
+test("renamed matrix jobs wait for the replacement to finish", fakeGhOptions, () => {
+  const fixture = matrixReplacement();
+  const completed = fixture.rollups[0];
+  fixture.rollups.unshift({
+    statusCheckRollup: completed.statusCheckRollup.map((entry, index) =>
+      index === 1 ? { ...entry, status: "IN_PROGRESS", conclusion: null } : entry,
+    ),
+  });
+  const result = runWithFakeGh(fixture);
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.equal(rollupReads(result.calls).length, 2);
+});
+
+test("renamed jobs need an unambiguous completed successful replacement", fakeGhOptions, () => {
+  for (const changed of [
+    { workflow_id: 8 },
+    { head_sha: "b".repeat(40) },
+    { created_at: EARLIER_START },
+    { status: "in_progress", conclusion: null },
+    { conclusion: "failure" },
+    { conclusion: "cancelled" },
+    { conclusion: "skipped" },
+  ]) {
+    const fixture = matrixReplacement();
+    Object.assign(fixture.runs[`${RUN_ENDPOINT}/${NEWER_RUN}`], changed);
+    const result = runWithFakeGh(fixture);
+    assert.equal(result.status, 1, result.stdout + result.stderr);
+  }
+  for (const scenario of ["skipped", "unknown", "tie", "unreadable"]) {
+    const fixture = matrixReplacement();
+    const entries = fixture.rollups[0].statusCheckRollup;
+    if (scenario === "skipped") {
+      entries[1].conclusion = "SKIPPED";
+      entries[2].conclusion = "SKIPPED";
+    } else if (scenario === "unknown") {
+      entries[0].detailsUrl = "https://example.invalid/check";
+    } else if (scenario === "tie") {
+      fixture.runs[`${RUN_ENDPOINT}/300`] = {
+        ...fixture.runs[`${RUN_ENDPOINT}/${NEWER_RUN}`],
+        html_url: `${RUN_URL}/300`,
+      };
+      entries[2].detailsUrl = `${RUN_URL}/300/job/2`;
+    } else {
+      fixture.runs[`${RUN_ENDPOINT}/${NEWER_RUN}`] = { error: "HTTP 502" };
+    }
+    const result = runWithFakeGh(fixture);
+    assert.equal(result.status, scenario === "unreadable" ? 2 : 1, result.stdout + result.stderr);
+  }
+});
+
+test("retired matrix placeholders cannot satisfy the minimum-check guard", fakeGhOptions, () => {
+  const fixture = matrixReplacement();
+  fixture.rollups.push({
+    statusCheckRollup: [
+      ...fixture.rollups[0].statusCheckRollup,
+      checkRun("Lint", "COMPLETED", "SUCCESS"),
+    ],
+  });
+  const result = runWithFakeGh(fixture, ["--min-checks", "3"]);
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.equal(rollupReads(result.calls).length, 2);
+});
+
 test(
   "the CLI uses the newest same-workflow attempt in all-check and required modes",
   fakeGhOptions,
