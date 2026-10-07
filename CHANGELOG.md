@@ -20,6 +20,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cached content. For a more recent file, the next run reads the file and
   compares the content hash. The parse cache version and the duplication cache
   version change, so the first run after the upgrade parses all files again.
+- `fallow dead-code --summary` now lists the rule-pack "Policy violations"
+  row. The total already counted these findings.
+- The human status line of `fallow dead-code` now counts policy violations,
+  boundary coverage violations and boundary call violations. Boundary
+  violations show as "boundary violation" instead of "violation". Before, a run
+  with only policy violations printed a status line with no count.
+- The `Failed:` line of bare `fallow` now says "1 issue" and "1 clone group"
+  in the singular.
+### Added
+
+- **`fallow architecture`** reports import cycles, boundary violations and
+  rule-pack policy violations in one command. Use `--cycles`, `--boundaries`
+  or `--policy` to select one kind. The command takes the same scope and
+  output flags as `fallow dead-code`, and its JSON output is the `dead-code`
+  envelope with the same arrays and finding ids. Run `fallow guard <files>`
+  before an edit and `fallow architecture` after it. Bare `fallow` shows these
+  findings in an "Architecture" category after the other dead-code categories,
+  with and without `--quiet`, and also with `--group-by` and `--summary`. With
+  `--group-by`, `fallow architecture` shows one "Architecture" heading per
+  group. In JSON, `fallow architecture` names itself in `next_steps` and
+  `_meta.docs` points to the architecture page.
+- Bare `fallow` accepts `architecture` in `--only` and `--skip`.
+  `--only architecture` runs the dead-code analysis and reports only the
+  architecture findings, and its `Failed:` line names `architecture`.
+  `--skip architecture` removes them from the dead-code
+  section. The health score and the `--save-baseline` file do not change.
+- Telemetry records `fallow architecture` runs as the `architecture` workflow.
+- The GitHub Action accepts `command: architecture` and the GitLab template
+  accepts `FALLOW_COMMAND: architecture`. `issue-types` and
+  `FALLOW_ISSUE_TYPES` take `cycles`, `boundaries` and `policy` for this
+  command. Another value stops the job with exit code 2 and an error that
+  names the valid values.
+
+### Deprecated
+
+- The `fallow dead-code` flags `--circular-deps`, `--re-export-cycles`,
+  `--package-cycles`, `--boundary-violations` and `--policy-violations` are
+  aliases of `fallow architecture --cycles`, `--boundaries` and `--policy`.
+  They keep working in v3. `fallow dead-code` keeps reporting these findings
+  until the next major version, and its human output points to
+  `fallow architecture` when it reports one.
 
 ## [3.32.0] - 2026-10-06
 
